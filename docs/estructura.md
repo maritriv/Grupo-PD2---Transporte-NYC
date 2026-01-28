@@ -23,17 +23,14 @@ nyc-transport-project/
 │  ├─ viz/
 │  │  └─ plotting_utils.py         # funciones para mapas, gráficos
 │  └─ models/
-│     └─ (si luego hay modelos, scoring, etc.)
 ├─ docs/
 │  ├─ entrega1/
-│  │  ├─ enunciado.pdf
 │  │  └─ memoria_entrega1.md       # borrador informe
 │  └─ referencias.md               # enlaces a TLC, papers, etc.
 ├─ config/
-│  ├─ data_sources.yaml            # qué años/servicios descargáis
-│  └─ spark.conf                   # configuración si usáis Spark
+│  ├─ data_sources.yaml            # qué años/servicios descargamos
 ├─ tests/
 │  └─ test_data_utils.py           # pruebas básicas de funciones
 ├─ .gitignore
 ├─ README.md
-└─ requirements.txt  (o pyproject.toml)
+└─ pyproject.toml
