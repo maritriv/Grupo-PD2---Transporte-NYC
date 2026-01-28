@@ -1,3 +1,4 @@
+```
 nyc-transport-project/
 ├─ data/
 │  ├─ raw/
@@ -34,3 +35,4 @@ nyc-transport-project/
 ├─ .gitignore
 ├─ README.md
 └─ pyproject.toml
+```
