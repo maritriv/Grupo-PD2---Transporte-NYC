@@ -228,7 +228,6 @@ def main(
     
     Ejemplos de uso:
     
-        \b
         uv run -m src.data.download_tlc_data --service yellow
         
         uv run -m src.data.download_tlc_data -s green --start-year 2024 --end-year 2024
