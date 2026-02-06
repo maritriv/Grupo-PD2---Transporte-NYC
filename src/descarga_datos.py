@@ -3,7 +3,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from download_tlc_data import download_service_data
+from src.download_tlc_data import download_service_data
 
 console = Console()
 

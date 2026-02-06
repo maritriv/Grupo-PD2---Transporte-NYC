@@ -10,7 +10,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, Downlo
 
 # Configuración base
 BASE_URL = "https://d37ci6vzurychx.cloudfront.net/trip-data"
-DEFAULT_DATA_DIR = Path(__file__).parent.parent.parent / "data" / "raw"
+DEFAULT_DATA_DIR = Path(__file__).parent.parent / "data" / "raw"
 
 # Consola Rich
 console = Console()
