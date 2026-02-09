@@ -138,17 +138,25 @@ def download_events_aggregated(
     type_field = type_field or "event_name"
 
     select = (
-        f"date_trunc_ymd({start_field}) as date,"
-        f"{borough_field} as borough,"
-        f"{type_field} as event_type,"
-        f"count(1) as n_events"
-    )
+    f"date_trunc_ymd({start_field}) as date,"
+    f"date_extract_hh({start_field}) as hour,"
+    f"{borough_field} as borough,"
+    f"{type_field} as event_type,"
+    f"count(1) as n_events"
+)
+
     where = (
         f"{start_field} between "
         f"'{date_from}T00:00:00.000' and '{date_to}T23:59:59.999'"
     )
-    group = f"date_trunc_ymd({start_field}), {borough_field}, {type_field}"
-    order = "date asc"
+
+    group = (
+        f"date_trunc_ymd({start_field}), "
+        f"date_extract_hh({start_field}), "
+        f"{borough_field}, {type_field}"
+    )
+
+    order = "date asc, hour asc"
 
     url = f"{BASE}/resource/{dataset_id}.json"
     params = {"$select": select, "$where": where, "$group": group, "$order": order}
@@ -159,11 +167,12 @@ def download_events_aggregated(
     # Guardado CSV (siempre)
     # -------------------------
     with open(out_csv, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["date", "borough", "event_type", "n_events"])
+        w = csv.DictWriter(f, fieldnames=["date", "hour","borough", "event_type", "n_events"])
         w.writeheader()
         for r in rows:
             w.writerow({
                 "date": (r.get("date") or "")[:10],   # YYYY-MM-DD
+                "hour": r.get("hour"),
                 "borough": r.get("borough"),
                 "event_type": r.get("event_type"),
                 "n_events": r.get("n_events"),
