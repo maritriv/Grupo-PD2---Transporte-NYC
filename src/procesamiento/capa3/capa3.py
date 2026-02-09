@@ -37,7 +37,7 @@ def read_layer2(
     max_date: str = "2024-12-31",
     cap_max_price: float = 500.0,   # cap simple anti-outliers
 ):
-    df = spark.read.parquet(layer2_path)
+    df = spark.read.parquet(str(layer2_path))
 
     # defensivo: quita registros rotos para agregación
     df = df.filter(
@@ -89,7 +89,7 @@ def build_layer3(
         .filter(F.col("num_trips") >= F.lit(min_trips_df2))
     )
 
-    # DF2b: Hotspots por servicio (zona + hora + día + servicio) ✅ clave para comparar taxi vs VTC
+    # DF2b: Hotspots por servicio (zona + hora + día + servicio) clave para comparar taxi vs VTC
     df_zone_hour_day_service = (
         df_capa2
         .groupBy("pu_location_id", "hour", "date", "service_type")

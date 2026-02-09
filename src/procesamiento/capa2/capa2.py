@@ -161,7 +161,7 @@ def add_zone_lookup(
 ):
     try:
         zones = (
-            spark.read.option("header", True).csv(zone_csv_path)
+            spark.read.option("header", True).csv(str(zone_csv_path))
             .select(
                 F.col("LocationID").cast("int").alias("location_id"),
                 F.col("Borough").alias("borough"),
@@ -288,14 +288,14 @@ def select_layer2_columns(df):
 # ---------------------------------------------------------------------
 # Guardado
 # ---------------------------------------------------------------------
-def save_layer2(df, out_path: Path = obtener_ruta("data/standarized")):
+def save_layer2(df, out_path: str = str(obtener_ruta("data/standarized"))):
     (
         df.write
           .mode("overwrite")
           .partitionBy("year", "month", "service_type")
           .parquet(out_path)
     )
-    print("\n✅ Capa 2 guardada en:", out_path)
+    print("\nCapa 2 guardada en:", out_path)
 
 
 # ---------------------------------------------------------------------

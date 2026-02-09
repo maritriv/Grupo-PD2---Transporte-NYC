@@ -6,7 +6,7 @@ findspark.init()
 from pyspark.sql import SparkSession, functions as F
 from config.settings import obtener_ruta
 
-LAYER2_PATH = obtener_ruta("data/standarized")
+LAYER2_PATH = str(obtener_ruta("data/standarized"))
 
 # Cuánto muestrear (para que sea rápido con 45M filas)
 SAMPLE_FRACTION = 0.0005  # 0.05% (~22k filas si hay 45M)
