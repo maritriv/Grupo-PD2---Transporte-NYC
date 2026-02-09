@@ -1,8 +1,11 @@
-# notebooks/faseA/capa2.py
+# src/procesamiento/capa2/capa2.py
 from __future__ import annotations
+import findspark
+findspark.init()
 
 from pathlib import Path
 from pyspark.sql import SparkSession, functions as F
+from config.settings import obtener_ruta
 
 DEBUG = False  # pon True para ver schemas/previews
 
@@ -31,7 +34,7 @@ def get_spark(app_name: str = "PD2-Capa2"):
 # ---------------------------------------------------------------------
 def read_raw_services(
     spark,
-    base_path: str = "data/raw",
+    base_path: Path = obtener_ruta("data/raw"),
     services: tuple[str, ...] = ("yellow", "green", "fhvhv"),
 ):
     dfs = []
@@ -54,7 +57,7 @@ def read_raw_services(
         dfs.append(df)
 
     if not dfs:
-        raise RuntimeError("❌ No se encontró ningún parquet en data/raw/*")
+        raise RuntimeError("No se encontró ningún parquet en data/raw/*")
 
     out = dfs[0]
     for d in dfs[1:]:
@@ -154,7 +157,7 @@ def build_layer2(df):
 def add_zone_lookup(
     spark,
     df,
-    zone_csv_path: str = "data/external/taxi_zone_lookup.csv",
+    zone_csv_path: Path = obtener_ruta("data/external") / "taxi_zone_lookup.csv",
 ):
     try:
         zones = (
@@ -285,7 +288,7 @@ def select_layer2_columns(df):
 # ---------------------------------------------------------------------
 # Guardado
 # ---------------------------------------------------------------------
-def save_layer2(df, out_path: str = "data/standarized"):
+def save_layer2(df, out_path: Path = obtener_ruta("data/standarized")):
     (
         df.write
           .mode("overwrite")

@@ -1,10 +1,13 @@
-# notebooks/faseA/capa3/capa3.py
+# src/procesamiento/capa3/capa3.py
 from __future__ import annotations
+import findspark
+findspark.init()
 
+from pathlib import Path
 from pyspark.sql import SparkSession, functions as F
+from config.settings import obtener_ruta
 
 DEBUG = False  # True para ver previews
-
 
 # ---------------------------------------------------------------------
 # Spark (igual que tu capa2)
@@ -29,7 +32,7 @@ def get_spark(app_name: str = "PD2-Capa3"):
 # ---------------------------------------------------------------------
 def read_layer2(
     spark,
-    layer2_path: str = "data/standarized",
+    layer2_path: Path = obtener_ruta("data/standarized"),
     min_date: str = "2019-01-01",
     max_date: str = "2024-12-31",
     cap_max_price: float = 500.0,   # cap simple anti-outliers
@@ -131,7 +134,7 @@ def save_layer3(
     df_zone_hour_day_global,
     df_zone_hour_day_service,
     df_variability,
-    out_base: str = "data/aggregated",
+    out_base: Path = obtener_ruta("data/aggregated"),
 ):
     (
         df_daily_service
@@ -165,7 +168,7 @@ def save_layer3(
         .parquet(f"{out_base}/df_variability")
     )
 
-    print("\n✅ Capa 3 guardada en:", out_base)
+    print("\nCapa 3 guardada en:", out_base)
     print(" - df_daily_service           ->", f"{out_base}/df_daily_service")
     print(" - df_zone_hour_day_global    ->", f"{out_base}/df_zone_hour_day_global")
     print(" - df_zone_hour_day_service   ->", f"{out_base}/df_zone_hour_day_service")
@@ -180,7 +183,7 @@ def main():
 
     df_capa2 = read_layer2(
         spark,
-        layer2_path="data/standarized",
+        layer2_path=obtener_ruta("data/standarized"),
         min_date="2019-01-01",
         max_date="2024-03-01",
         cap_max_price=500.0,
@@ -205,7 +208,7 @@ def main():
         print("\n--- DF3 variability (IQR) sample ---")
         df3.orderBy(F.desc("biz_score")).show(10, truncate=False)
 
-    save_layer3(df1, df2a, df2b, df3, out_base="data/aggregated")
+    save_layer3(df1, df2a, df2b, df3, out_base=obtener_ruta("data/aggregated"))
     spark.stop()
 
 

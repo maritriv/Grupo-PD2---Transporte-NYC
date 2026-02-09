@@ -1,15 +1,18 @@
-# notebooks/faseA/capa2/inspect_capa2.py
+# src/procesamiento/capa2/inspect_capa2.py
 from __future__ import annotations
+import findspark
+findspark.init()
 
 from pyspark.sql import SparkSession, functions as F
+from config.settings import obtener_ruta
 
-LAYER2_PATH = "data/standarized"
+LAYER2_PATH = obtener_ruta("data/standarized")
 
 # Cuánto muestrear (para que sea rápido con 45M filas)
 SAMPLE_FRACTION = 0.0005  # 0.05% (~22k filas si hay 45M)
 SEED = 42
 
-# Rango "esperado" (ajústalo a tu proyecto si quieres trabajar solo 2024-01/02)
+# Rango "esperado"
 MIN_DATE_EXPECTED = "2019-01-01"
 MAX_DATE_EXPECTED = "2024-03-01"
 
@@ -38,7 +41,7 @@ def main():
     spark = get_spark()
 
     df = spark.read.parquet(LAYER2_PATH)
-    print(f"\n📦 Leyendo capa2 desde: {LAYER2_PATH}")
+    print(f"\nLeyendo capa2 desde: {LAYER2_PATH}")
 
     # -------------------------
     # 1) Esquema + columnas
