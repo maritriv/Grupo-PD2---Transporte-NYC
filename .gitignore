@@ -6,8 +6,8 @@ outputs/
 
 # Outputs de notebooks (Fase A/B)
 notebooks/faseA/faseA_resultados/
-notebooks/faseB/faseB_resultados/
-notebooks/faseB/visualizaciones_conjuntas/
+notebooks/faseB/visualizaciones_individuales_resultados/
+notebooks/faseB/visualizaciones_comparativas_resultados/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
