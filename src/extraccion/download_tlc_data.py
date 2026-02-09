@@ -1,4 +1,4 @@
-# src/data/download_tlc_data.py
+# src/extraccion/download_tlc_data.py
 import itertools
 from pathlib import Path
 from typing import Optional
@@ -8,9 +8,11 @@ import requests
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, DownloadColumn, TransferSpeedColumn
 
+from config.settings import obtener_ruta, config
+
 # Configuración base
-BASE_URL = "https://d37ci6vzurychx.cloudfront.net/trip-data"
-DEFAULT_DATA_DIR = Path(__file__).parent.parent / "data" / "raw"
+BASE_URL = config['descarga']['url_base']
+DEFAULT_DATA_DIR = obtener_ruta("data/raw")
 
 # Consola Rich
 console = Console()

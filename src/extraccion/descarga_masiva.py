@@ -1,9 +1,10 @@
-# src/features/build_features.py
-from pathlib import Path
+# src/extraccion/descarga_masiva.py
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from src.download_tlc_data import download_service_data
+from src.extraccion.download_tlc_data import download_service_data
+from config.settings import obtener_ruta, config, servicios_habilitados
+
 
 console = Console()
 
@@ -15,13 +16,9 @@ console = Console()
 # | High Volume FHV (HVFHV) | Uber, Lyft y otras bases de "alto volumen".                      | Desde 2019 hasta 2025+.                    |
 
 
-def download_all_services(start_year: int = 2023, end_year: int = 2025):
+def download_all_services():
     """
     Descarga datos de todos los servicios de NYC TLC.
-    
-    Args:
-        start_year: Año inicial de descarga
-        end_year: Año final de descarga (inclusive)
     """
     services = {
         'yellow': ('Yellow Taxi (taxis amarillos tradicionales)', 'yellow'),
@@ -29,8 +26,19 @@ def download_all_services(start_year: int = 2023, end_year: int = 2025):
         'fhv': ('FHV (For-Hire Vehicles, livery, black car)', 'blue'),
         'fhvhv': ('HVFHV (Uber, Lyft, alto volumen)', 'magenta')
     }
+
+    services = {
+        k: v for k, v in services.items()
+        if k in servicios_habilitados # Filtrar por los servicios habilitados
+    }
     
     total_services = len(services)
+
+    # Configuracion descarga
+    descarga_config = config['descarga']
+    start_year = descarga_config['start_year']
+    end_year = descarga_config['end_year']
+    months = range(descarga_config['start_month'], descarga_config['end_month'] + 1)
     
     # Header principal
     console.print()
@@ -57,8 +65,8 @@ def download_all_services(start_year: int = 2023, end_year: int = 2025):
             stats = download_service_data(
                 service=service_key,
                 years=range(start_year, end_year + 1),
-                months=range(1, 13),
-                data_dir=Path("data/raw")
+                months=months,
+                data_dir=obtener_ruta("data/raw")
             )
             results[service_key] = {
                 "status": "completado",
@@ -168,4 +176,4 @@ def download_all_services(start_year: int = 2023, end_year: int = 2025):
 
 
 if __name__ == "__main__":
-    download_all_services(start_year=2020, end_year=2025)
+    download_all_services()

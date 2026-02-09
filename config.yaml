@@ -1,0 +1,41 @@
+# config.yaml - Configuración del proyecto NYC TLC
+
+# Rutas del proyecto (relativas a la raíz)
+rutas:
+  data: "data"
+  outputs: "outputs"
+
+# Configuración de descarga
+descarga:
+  # Años a descargar por defecto
+  start_year: 2020
+  end_year: 2025
+  
+  # Meses a descargar por defecto (1-12)
+  start_month: 1
+  end_month: 12
+  
+  # URL base de TLC
+  url_base: "https://d37ci6vzurychx.cloudfront.net/trip-data"
+  
+  # Configuración de red
+  timeout_segundos: 30
+  tamaño_chunk: 8192
+  
+# Servicios de taxi a descargar
+servicios:
+  yellow:
+    nombre: "Yellow Taxi"
+    habilitado: true
+    
+  green:
+    nombre: "Green Taxi"
+    habilitado: true
+    
+  fhv:
+    nombre: "For-Hire Vehicles"
+    habilitado: true
+    
+  fhvhv:
+    nombre: "High Volume FHV"
+    habilitado: true
