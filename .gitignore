@@ -9,6 +9,9 @@ notebooks/faseA/faseA_resultados/
 notebooks/faseB/visualizaciones_individuales_resultados/
 notebooks/faseB/visualizaciones_comparativas_resultados/
 
+# Ignorar todos los archivos PNG (opcional, si no quieres ninguno)
+*.png
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
