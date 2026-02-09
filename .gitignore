@@ -4,6 +4,11 @@ data/
 # Outputs generados (figuras, plots, etc.)
 outputs/
 
+# Outputs de notebooks (Fase A/B)
+notebooks/faseA/faseA_resultados/
+notebooks/faseB/faseB_resultados/
+notebooks/faseB/visualizaciones_conjuntas/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 # Configuración de rutas
 BASE_DATA_DIR = Path("data/raw")
-OUTPUT_DIR = Path("notebooks/faseB/faseB_resultados")
+OUTPUT_DIR = Path("notebooks/faseB/visualizaciones_individuales_resultados")
 SERVICES_TO_ANALYZE = ["yellow", "green", "fhvhv"]
 
 def analizar_y_guardar(filepath, servicio):

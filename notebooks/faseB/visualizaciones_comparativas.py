@@ -9,7 +9,7 @@ from tqdm import tqdm
 BASE_DATA_DIR = Path("data/raw")
 TARGET_MONTHS = ["2020-01", "2020-04", "2023-01", "2024-01", "2024-12"]
 SERVICES = ["yellow", "green", "fhvhv"]
-OUTPUT_DIR = Path("notebooks/faseB/visualizaciones_conjuntas")
+OUTPUT_DIR = Path("notebooks/faseB/visualizaciones_comparativas_resultados")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 def cargar_datos_mes(servicio, mes):
