@@ -4,7 +4,7 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 
 from pyspark.sql import functions as F
-from notebooks.faseB.viz_common import get_spark, read_capa3, ensure_local_date, save_fig
+from src.visualizaciones.viz_tlc.viz_common import get_spark, read_capa3, save_fig, ensure_local_date
 
 
 def plot_num_trips(df_daily):
@@ -51,10 +51,10 @@ def main():
     df1, _, _, _ = read_capa3(spark)
 
     fig1 = plot_num_trips(df1)
-    save_fig(fig1, "outputs/faseB/01_num_trips_by_service.png")
+    save_fig(fig1, "outputs/viz_tlc/01_num_trips_by_service.png")
 
     fig2 = plot_avg_price(df1)
-    save_fig(fig2, "outputs/faseB/02_avg_price_by_service.png")
+    save_fig(fig2, "outputs/viz_tlc/02_avg_price_by_service.png")
 
     spark.stop()
 

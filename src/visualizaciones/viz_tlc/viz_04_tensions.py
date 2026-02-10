@@ -4,7 +4,7 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 
 from pyspark.sql import functions as F
-from notebooks.faseB.viz_common import get_spark, read_capa3, save_fig
+from src.visualizaciones.viz_tlc.viz_common import get_spark, read_capa3, save_fig
 
 
 def main():
@@ -27,7 +27,7 @@ def main():
     plt.xlabel("num_trips")
     plt.ylabel("price_variability (IQR)")
     plt.legend()
-    save_fig(fig, "outputs/faseB/07_scatter_volume_vs_variability.png")
+    save_fig(fig, "outputs/viz_tlc/07_scatter_volume_vs_variability.png")
 
     # Ranking negocio: top 15 (gráfico de barras)
     rank = (
@@ -47,7 +47,7 @@ def main():
     plt.title("Top 15 oportunidades (biz_score = variabilidad * log(1+volumen))")
     plt.xlabel("biz_score")
     plt.gca().invert_yaxis()
-    save_fig(fig2, "outputs/faseB/08_top15_biz_score.png")
+    save_fig(fig2, "outputs/viz_tlc/08_top15_biz_score.png")
 
     spark.stop()
 

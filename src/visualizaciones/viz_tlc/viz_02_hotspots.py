@@ -4,7 +4,7 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 
 from pyspark.sql import functions as F
-from notebooks.faseB.viz_common import get_spark, read_capa3, save_fig
+from src.visualizaciones.viz_tlc.viz_common import get_spark, read_capa3, save_fig
 
 
 def make_heatmap_pivot(pdf, title: str, value_col: str):
@@ -51,14 +51,14 @@ def main():
         title="Hotspots: demanda media (num_trips) por zona y hora [TOP 60 zonas]",
         value_col="avg_num_trips",
     )
-    save_fig(fig1, "outputs/faseB/03_heatmap_demand_zone_hour.png")
+    save_fig(fig1, "outputs/viz_tlc/03_heatmap_demand_zone_hour.png")
 
     fig2 = make_heatmap_pivot(
         pdf,
         title="Hotspots: precio medio (avg_price) por zona y hora [TOP 60 zonas]",
         value_col="avg_price",
     )
-    save_fig(fig2, "outputs/faseB/04_heatmap_price_zone_hour.png")
+    save_fig(fig2, "outputs/viz_tlc/04_heatmap_price_zone_hour.png")
 
     spark.stop()
 

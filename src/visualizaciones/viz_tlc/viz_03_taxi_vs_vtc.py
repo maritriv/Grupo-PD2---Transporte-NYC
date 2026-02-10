@@ -4,7 +4,7 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 
 from pyspark.sql import functions as F
-from notebooks.faseB.viz_common import get_spark, read_capa3, save_fig
+from src.visualizaciones.viz_tlc.viz_common import get_spark, read_capa3, save_fig
 
 
 def main():
@@ -48,7 +48,7 @@ def main():
         plt.ylabel("Avg num_trips")
         plt.xticks(range(0, 24, 2))
         plt.legend()
-        save_fig(fig, f"outputs/faseB/05_zone_{zid}_demand_by_hour_service.png")
+        save_fig(fig, f"outputs/viz_tlc/05_zone_{zid}_demand_by_hour_service.png")
 
     # Plot 2: precio por hora (comparando servicios) en cada zona
     for zid in zone_rank:
@@ -63,7 +63,7 @@ def main():
         plt.ylabel("Avg price")
         plt.xticks(range(0, 24, 2))
         plt.legend()
-        save_fig(fig, f"outputs/faseB/06_zone_{zid}_price_by_hour_service.png")
+        save_fig(fig, f"outputs/viz_tlc/06_zone_{zid}_price_by_hour_service.png")
 
     spark.stop()
 

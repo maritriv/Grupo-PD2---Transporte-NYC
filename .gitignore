@@ -4,10 +4,6 @@ data/
 # Outputs generados (figuras, plots, etc.)
 outputs/
 
-# Outputs de notebooks (Fase A/B)
-src/procesamiento/capa1/capa1_resultados/
-src/visualizaciones/visualizaciones_individuales_resultados/
-src/visualizaciones/visualizaciones_comparativas_resultados/
 
 # Ignorar todos los archivos PNG (opcional, si no quieres ninguno)
 *.png

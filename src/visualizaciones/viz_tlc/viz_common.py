@@ -34,6 +34,6 @@ def ensure_local_date(df, col="date"):
 
 def save_fig(fig, out_path: str):
     import os
-    os.makedirs("outputs/faseB", exist_ok=True)
+    os.makedirs("outputs/viz_tlc", exist_ok=True)
     fig.savefig(out_path, dpi=160, bbox_inches="tight")
     print("✅ Guardado:", out_path)
