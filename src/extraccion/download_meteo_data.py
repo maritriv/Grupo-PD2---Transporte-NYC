@@ -1,39 +1,74 @@
 # src/extraccion/download_meteo_data.py
 from __future__ import annotations
 
-import argparse
-import csv
+import calendar
+import itertools
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 
+import click
 import requests
+import pandas as pd
 from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
+
+from config.settings import obtener_ruta, meteo_config
+
+"""
+download_meteo_data.py
+│
+├── Configuración
+├── Helpers Open-Meteo (HTTP / chunking)
+├── Helpers Parquet (conversión)
+├── Lógica de negocio
+│   ├── download_meteo_aggregated (interna)
+│   ├── download_meteo_month       (unidad básica)
+│   └── download_meteo_range       (orquestador)
+└── CLI (Click)
+"""
 
 
-# Intentamos usar vuestro sistema de config/rutas (lo mantenemos por compatibilidad),
-# pero para evitar errores de rutas en Windows/ejecución por el profe, NO dependeremos de obtener_ruta.
-try:
-    from config.settings import obtener_ruta, config  # type: ignore
-except Exception:  # fallback si alguien ejecuta sin ese módulo
-    config = {}
-
-    def obtener_ruta(p: str) -> Path:
-        return Path(p)
-
+# =============================================================================
+# Configuración
+# =============================================================================
+BASE_URL = meteo_config['url_base']
+DEFAULT_OUT_DIR = obtener_ruta("data/external/meteo/raw")
 
 console = Console()
 
-# Open-Meteo Historical Weather API (Archive)
-# Docs: https://open-meteo.com/en/docs/historical-weather-api
-BASE = "https://archive-api.open-meteo.com/v1/archive"
+
+# =============================================================================
+# Helpers Parquet
+# =============================================================================
+def dataframe_to_parquet(df: pd.DataFrame, parquet_path: Path) -> None:
+    """
+    Convierte DataFrame a Parquet usando Pandas + PyArrow.
+    """
+    console.print(f"[dim]  → Escribiendo Parquet...[/dim]")
+    
+    # Conversión de tipos
+    df['date'] = pd.to_datetime(df['date'])
+    df['hour'] = df['hour'].astype('int32')
+    
+    # Convertir columnas numéricas
+    numeric_cols = ['temp_c', 'precip_mm', 'rain_mm', 'snowfall_mm', 'wind_kmh', 'weather_code']
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    # Escribir parquet
+    df.to_parquet(parquet_path, engine='pyarrow', index=False)
+    
+    console.print(f"[dim]  → Parquet generado[/dim]")
 
 
+# =============================================================================
+# Helpers Open-Meteo
+# =============================================================================
 def _date_chunks(date_from: str, date_to: str, chunk_days: int = 31) -> Iterable[tuple[str, str]]:
     """
-    Divide un rango [date_from, date_to] en trozos de chunk_days para evitar respuestas gigantes.
+    Divide un rango [date_from, date_to] en trozos de chunk_days.
     Devuelve tuplas (start_date, end_date) en formato YYYY-MM-DD.
     """
     start = datetime.strptime(date_from, "%Y-%m-%d").date()
@@ -53,7 +88,11 @@ def _fetch_open_meteo_hourly(
     date_to: str,
     timezone: str,
     hourly_vars: list[str],
+    timeout: int = meteo_config['timeout'],
 ) -> dict[str, Any]:
+    """
+    Realiza una petición a Open-Meteo Archive API.
+    """
     params = {
         "latitude": latitude,
         "longitude": longitude,
@@ -62,36 +101,29 @@ def _fetch_open_meteo_hourly(
         "timezone": timezone,
         "hourly": ",".join(hourly_vars),
     }
-    r = requests.get(BASE, params=params, timeout=120)
+    r = requests.get(BASE_URL, params=params, timeout=timeout)
     r.raise_for_status()
     return r.json()
 
 
-def download_meteo_hourly_nyc(
+# =============================================================================
+# Lógica de negocio
+# =============================================================================
+def download_meteo_aggregated(
     date_from: str,
     date_to: str,
     out_dir: Path,
-    out_name: str = "meteo_hourly_nyc",
-    latitude: float = 40.7128,
-    longitude: float = -74.0060,
-    timezone: str = "America/New_York",
-) -> dict[str, Any]:
+    tmp_name: str,
+    latitude: float,
+    longitude: float,
+    timezone: str,
+) -> Path:
     """
-    Descarga meteo horario (NYC) desde Open-Meteo Archive API.
-
-    Guarda:
-      - CSV (siempre)
-      - Parquet (con pandas+pyarrow si está disponible)
-
-    Output columns:
-      date (YYYY-MM-DD), hour (0-23),
-      temp_c, precip_mm, rain_mm, snowfall_mm, wind_kmh, weather_code
+    Descarga datos meteorológicos agregados en un rango de fechas.
+    Devuelve la ruta del parquet generado.
     """
-    out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    out_csv = out_dir / f"{out_name}.csv"
-    out_parquet = out_dir / f"{out_name}.parquet"
+    tmp_parquet = out_dir / f"{tmp_name}.parquet"
 
     hourly_vars = [
         "temperature_2m",
@@ -104,187 +136,229 @@ def download_meteo_hourly_nyc(
 
     rows: list[dict[str, Any]] = []
 
-    for start_date, end_date in _date_chunks(date_from, date_to, chunk_days=31):
-        payload = _fetch_open_meteo_hourly(
-            latitude=latitude,
-            longitude=longitude,
-            date_from=start_date,
-            date_to=end_date,
-            timezone=timezone,
-            hourly_vars=hourly_vars,
-        )
+    console.print(f"[dim]  → Descargando datos meteorológicos...[/dim]")
 
-        hourly = payload.get("hourly") or {}
-        times: list[str] = hourly.get("time") or []
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[cyan]{task.fields[rows]} filas"),
+        console=console,
+        transient=True
+    ) as progress:
+        task = progress.add_task("[cyan]Descargando", total=None, rows=0)
 
-        temp = hourly.get("temperature_2m") or []
-        precip = hourly.get("precipitation") or []
-        rain = hourly.get("rain") or []
-        snow = hourly.get("snowfall") or []
-        wind = hourly.get("wind_speed_10m") or []
-        wcode = hourly.get("weather_code") or []
-
-        n = len(times)
-
-        def _safe_get(arr: list[Any], i: int) -> Any:
-            return arr[i] if isinstance(arr, list) and i < len(arr) else None
-
-        for i in range(n):
-            t = times[i]  # "YYYY-MM-DDTHH:MM"
-            d = t[:10]
-            try:
-                hh = int(t[11:13])
-            except Exception:
-                hh = None
-
-            rows.append(
-                {
-                    "date": d,
-                    "hour": hh,
-                    "temp_c": _safe_get(temp, i),
-                    "precip_mm": _safe_get(precip, i),
-                    "rain_mm": _safe_get(rain, i),
-                    "snowfall_mm": _safe_get(snow, i),
-                    "wind_kmh": _safe_get(wind, i),
-                    "weather_code": _safe_get(wcode, i),
-                }
+        for start_date, end_date in _date_chunks(date_from, date_to, chunk_days=31):
+            payload = _fetch_open_meteo_hourly(
+                latitude=latitude,
+                longitude=longitude,
+                date_from=start_date,
+                date_to=end_date,
+                timezone=timezone,
+                hourly_vars=hourly_vars,
             )
 
-    # -------------------------
-    # Guardado CSV (siempre)
-    # -------------------------
-    with open(out_csv, "w", newline="", encoding="utf-8") as f:
-        fieldnames = ["date", "hour", "temp_c", "precip_mm", "rain_mm", "snowfall_mm", "wind_kmh", "weather_code"]
-        w = csv.DictWriter(f, fieldnames=fieldnames)
-        w.writeheader()
-        for r in rows:
-            w.writerow(r)
+            hourly = payload.get("hourly") or {}
+            times: list[str] = hourly.get("time") or []
 
-    # -------------------------
-    # Guardado Parquet (portable: pandas+pyarrow)
-    # -------------------------
-    parquet_ok = True
-    parquet_engine = None
-    try:
-        import pandas as pd  # type: ignore
+            temp = hourly.get("temperature_2m") or []
+            precip = hourly.get("precipitation") or []
+            rain = hourly.get("rain") or []
+            snow = hourly.get("snowfall") or []
+            wind = hourly.get("wind_speed_10m") or []
+            wcode = hourly.get("weather_code") or []
 
-        df = pd.DataFrame(rows)
+            n = len(times)
 
-        # Intentamos pyarrow primero (más común); si no, fastparquet
-        try:
-            import pyarrow  # noqa: F401  # type: ignore
-            parquet_engine = "pyarrow"
-        except Exception:
-            try:
-                import fastparquet  # noqa: F401  # type: ignore
-                parquet_engine = "fastparquet"
-            except Exception:
-                parquet_engine = None
+            def _safe_get(arr: list[Any], i: int) -> Any:
+                return arr[i] if isinstance(arr, list) and i < len(arr) else None
 
-        if parquet_engine is None:
-            raise RuntimeError(
-                "No hay engine de parquet instalado. Instala 'pyarrow' (recomendado) o 'fastparquet'."
-            )
+            for i in range(n):
+                t = times[i]  # "YYYY-MM-DDTHH:MM"
+                d = t[:10]
+                try:
+                    hh = int(t[11:13])
+                except Exception:
+                    hh = None
 
-        df.to_parquet(out_parquet, index=False, engine=parquet_engine)
+                rows.append(
+                    {
+                        "date": d,
+                        "hour": hh,
+                        "temp_c": _safe_get(temp, i),
+                        "precip_mm": _safe_get(precip, i),
+                        "rain_mm": _safe_get(rain, i),
+                        "snowfall_mm": _safe_get(snow, i),
+                        "wind_kmh": _safe_get(wind, i),
+                        "weather_code": _safe_get(wcode, i),
+                    }
+                )
 
-    except Exception as e:
-        parquet_ok = False
-        console.print(
-            f"[yellow][WARN][/yellow] No se pudo guardar Parquet con pandas/{parquet_engine or 'N/A'} "
-            f"(se deja el CSV): {e}"
-        )
+            progress.update(task, rows=len(rows))
 
-    return {
-        "source": "open-meteo-archive",
-        "lat": latitude,
-        "lon": longitude,
-        "timezone": timezone,
-        "from": date_from,
-        "to": date_to,
-        "rows": len(rows),
-        "out_csv": str(out_csv),
-        "out_parquet": str(out_parquet) if parquet_ok else None,
-        "parquet_engine": parquet_engine if parquet_ok else None,
-    }
+    console.print(f"[dim]  → {len(rows)} registros obtenidos[/dim]")
+
+    # Crear DataFrame y guardar
+    df = pd.DataFrame(rows)
+    dataframe_to_parquet(df, tmp_parquet)
+
+    return tmp_parquet
 
 
-# -----------------------------
-# CLI
-# -----------------------------
-def main():
-    meteo_cfg = (config.get("meteo") or {}) if isinstance(config, dict) else {}
+def download_meteo_month(
+    year: int,
+    month: int,
+    out_dir: Path,
+    latitude: float,
+    longitude: float,
+    timezone: str,
+    tag: str = "meteo",
+) -> dict[str, Any]:
+    """
+    Descarga datos meteorológicos de un mes específico.
+    """
+    from datetime import date as dt_date
+    
+    start = dt_date(year, month, 1)
+    end = dt_date(year, month, calendar.monthrange(year, month)[1])
 
-    default_from = meteo_cfg.get("date_from", "2024-01-01")
-    default_to = meteo_cfg.get("date_to", "2025-12-31")
-    default_out_name = meteo_cfg.get("out_name", "meteo_hourly_nyc")
-    default_lat = float(meteo_cfg.get("latitude", 40.7128))
-    default_lon = float(meteo_cfg.get("longitude", -74.0060))
-    default_tz = meteo_cfg.get("timezone", "America/New_York")
-
-    p = argparse.ArgumentParser(description="Descarga meteo horario (NYC) desde Open-Meteo Archive API.")
-    p.add_argument("--from", dest="date_from", default=default_from, help="YYYY-MM-DD")
-    p.add_argument("--to", dest="date_to", default=default_to, help="YYYY-MM-DD")
-    p.add_argument("--name", dest="out_name", default=default_out_name, help="Nombre base del archivo de salida")
-    p.add_argument("--lat", dest="latitude", type=float, default=default_lat, help="Latitud (default NYC)")
-    p.add_argument("--lon", dest="longitude", type=float, default=default_lon, help="Longitud (default NYC)")
-    p.add_argument("--tz", dest="timezone", default=default_tz, help="Timezone (default America/New_York)")
-    args = p.parse_args()
-
-    try:
-        datetime.strptime(args.date_from, "%Y-%m-%d")
-        datetime.strptime(args.date_to, "%Y-%m-%d")
-    except ValueError:
-        raise SystemExit("Fechas inválidas. Usa formato YYYY-MM-DD")
-
-    # ✅ Ruta robusta e independiente de la carpeta actual y de obtener_ruta:
-    project_root = Path(__file__).resolve().parents[2]
-    out_dir = (project_root / "data" / "external" / "meteo" / "raw").resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+    final_parquet = out_dir / f"{tag}_{year}_{month:02d}.parquet"
 
-    console.print()
-    console.print(
-        Panel.fit(
-            "[bold white]NYC METEO (Open-Meteo Archive)[/bold white]\n"
-            "[cyan]Descarga meteo horario para NYC (date+hour)[/cyan]",
-            border_style="bright_blue",
-        )
-    )
-    console.print(f"[yellow]Periodo:[/yellow] {args.date_from} -> {args.date_to}")
-    console.print(f"[yellow]Destino:[/yellow] {out_dir}")
-    console.print(f"[yellow]Coords:[/yellow] lat={args.latitude}, lon={args.longitude} | tz={args.timezone}")
-    console.print()
+    console.print(f"\n[bold cyan]{year}-{month:02d}[/bold cyan]")
 
-    stats = download_meteo_hourly_nyc(
-        date_from=args.date_from,
-        date_to=args.date_to,
+    if final_parquet.exists():
+        console.print(f"[yellow]SKIP:[/yellow] {final_parquet.name}")
+        return {"status": "skipped", "path": str(final_parquet)}
+
+    tmp_name = f"__tmp_{tag}_{year}_{month:02d}"
+    tmp_parquet = download_meteo_aggregated(
+        date_from=start.isoformat(),
+        date_to=end.isoformat(),
         out_dir=out_dir,
-        out_name=args.out_name,
-        latitude=args.latitude,
-        longitude=args.longitude,
-        timezone=args.timezone,
+        tmp_name=tmp_name,
+        latitude=latitude,
+        longitude=longitude,
+        timezone=timezone,
     )
 
-    table = Table(title="Resumen descarga meteo", show_header=True, header_style="bold cyan")
-    table.add_column("Campo", style="cyan", width=18)
-    table.add_column("Valor", style="white")
+    tmp_parquet.rename(final_parquet)
+    console.print(f"[green]OK:[/green] {final_parquet.name}")
+    
+    return {"status": "ok", "path": str(final_parquet)}
 
-    table.add_row("source", str(stats["source"]))
-    table.add_row("from", str(stats["from"]))
-    table.add_row("to", str(stats["to"]))
-    table.add_row("rows", str(stats["rows"]))
-    table.add_row("out_csv", str(stats["out_csv"]))
-    table.add_row("out_parquet", str(stats["out_parquet"]))
-    table.add_row("parquet_engine", str(stats.get("parquet_engine")))
 
-    console.print(table)
+def download_meteo_range(
+    start_year: int,
+    end_year: int,
+    start_month: int = 1,
+    end_month: int = 12,
+    out_dir: Optional[Path] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    timezone: Optional[str] = None,
+) -> dict[str, int]:
+    """
+    Descarga datos meteorológicos para un rango de años y meses.
+    """
+    out_dir = out_dir or DEFAULT_OUT_DIR
+    
+    # Usar valores de configuración si no se proporcionan
+    latitude = latitude if latitude is not None else meteo_config['latitude']
+    longitude = longitude if longitude is not None else meteo_config['longitude']
+    timezone = timezone or meteo_config['timezone']
+    
+    years = range(start_year, end_year + 1)
+    months = range(start_month, end_month + 1)
+
+    stats = {"total": 0, "ok": 0, "skipped": 0, "failed": 0}
+
+    console.print(f"\n[bold]Descargando datos meteorológicos NYC[/bold]")
+    console.print(f"[yellow]Período:[/yellow] {start_year}/{start_month:02d} → {end_year}/{end_month:02d}")
+    console.print(f"[yellow]Coordenadas:[/yellow] lat={latitude}, lon={longitude}")
+    console.print(f"[yellow]Timezone:[/yellow] {timezone}")
+    console.print(f"[yellow]Destino:[/yellow] {out_dir}")
+    console.rule(style="dim")
+
+    for year, month in itertools.product(years, months):
+        stats["total"] += 1
+        try:
+            r = download_meteo_month(
+                year=year,
+                month=month,
+                out_dir=out_dir,
+                latitude=latitude,
+                longitude=longitude,
+                timezone=timezone,
+            )
+            stats[r["status"]] += 1
+        except Exception as e:
+            console.print(f"[red]ERROR:[/red] {str(e)}")
+            stats["failed"] += 1
+
     console.print()
-    console.print(
-        Panel.fit(
-            "[bold green]DESCARGA METEO COMPLETADA[/bold green]\n"
-            f"[dim]Filas horarias: {stats['rows']}[/dim]",
-            border_style="bright_green",
-        )
+    console.rule(style="dim")
+    console.print(f"[green]Descargados:[/green] {stats['ok']} | "
+                  f"[blue]Omitidos:[/blue] {stats['skipped']} | "
+                  f"[red]Fallidos:[/red] {stats['failed']} | "
+                  f"[bold]Total:[/bold] {stats['total']}")
+    console.print()
+
+    return stats
+
+
+# =============================================================================
+# CLI
+# =============================================================================
+@click.command()
+@click.option("--start-year", type=int, required=True, help="Año inicial")
+@click.option("--end-year", type=int, required=True, help="Año final")
+@click.option("--start-month", type=click.IntRange(1, 12), default=1, help="Mes inicial (1-12)")
+@click.option("--end-month", type=click.IntRange(1, 12), default=12, help="Mes final (1-12)")
+@click.option("--latitude", type=float, default=None, help="Latitud (default desde config)")
+@click.option("--longitude", type=float, default=None, help="Longitud (default desde config)")
+@click.option("--timezone", type=str, default=None, help="Timezone (default desde config)")
+def main(
+    start_year: int,
+    end_year: int,
+    start_month: int,
+    end_month: int,
+    latitude: Optional[float],
+    longitude: Optional[float],
+    timezone: Optional[str],
+):
+    """
+    Descarga datos meteorológicos de NYC desde Open-Meteo Archive API.
+    
+    Ejemplos de uso:
+    
+        # Descargar todos los datos de 2024
+        uv run -m src.extraccion.download_meteo_data \\
+            --start-year 2024 \\
+            --end-year 2024
+        
+        # Descargar datos de junio a agosto de 2023
+        uv run -m src.extraccion.download_meteo_data \\
+            --start-year 2023 \\
+            --end-year 2023 \\
+            --start-month 6 \\
+            --end-month 8
+        
+        # Usar coordenadas personalizadas
+        uv run -m src.extraccion.download_meteo_data \\
+            --start-year 2024 \\
+            --end-year 2024 \\
+            --latitude 40.7580 \\
+            --longitude -73.9855
+    """
+    download_meteo_range(
+        start_year=start_year,
+        end_year=end_year,
+        start_month=start_month,
+        end_month=end_month,
+        latitude=latitude,
+        longitude=longitude,
+        timezone=timezone,
     )
 
 

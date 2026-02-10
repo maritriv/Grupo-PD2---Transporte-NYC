@@ -38,7 +38,7 @@ DEFAULT_DATASET = eventos_config["dataset_id"]
 SOCRATA_LIMIT = eventos_config["socrata_limit"]
 TIMEOUT = eventos_config["timeout_segundos"]
 
-DEFAULT_OUT_DIR = obtener_ruta("data/external/events")
+DEFAULT_OUT_DIR = obtener_ruta("data/external/events/raw")
 
 console = Console()
 

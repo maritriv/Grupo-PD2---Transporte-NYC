@@ -9,7 +9,8 @@ from rich.table import Table
 
 from src.extraccion.download_tlc_data import download_service_data
 from src.extraccion.download_events_data import download_events_range
-from config.settings import obtener_ruta, config, servicios_habilitados, eventos_config
+from src.extraccion.download_meteo_data import download_meteo_range
+from config.settings import obtener_ruta, config, servicios_habilitados, eventos_config, meteo_config
 
 
 console = Console()
@@ -20,6 +21,7 @@ class DownloadMode(str, Enum):
     ALL = "all"
     TLC = "tlc"
     EVENTS = "events"
+    METEO = "meteo"
 
 
 # =============================================================================
@@ -142,7 +144,7 @@ def download_all_events():
             end_year=end_year,
             start_month=start_month,
             end_month=end_month,
-            out_dir=obtener_ruta("data/external/events")
+            out_dir=obtener_ruta("data/external/events/raw")
         )
         
         results['events'] = {
@@ -169,6 +171,79 @@ def download_all_events():
 
 
 # =============================================================================
+# Descarga de datos meteorológicos
+# =============================================================================
+
+def download_all_meteo():
+    """
+    Descarga datos meteorológicos de Open-Meteo.
+    """
+    # Configuración descarga
+    start_year = meteo_config['start_year']
+    end_year = meteo_config['end_year']
+    start_month = meteo_config['start_month']
+    end_month = meteo_config['end_month']
+    
+    latitude = meteo_config['latitude']
+    longitude = meteo_config['longitude']
+    timezone = meteo_config['timezone']
+    
+    # Header
+    console.print()
+    console.print(Panel.fit(
+        "[bold white]OPEN-METEO ARCHIVE[/bold white]\n"
+        "[cyan]Descarga de Datos Meteorológicos[/cyan]",
+        border_style="bright_blue"
+    ))
+    
+    console.print(f"[yellow]Período:[/yellow] {start_year} - {end_year}")
+    console.print(f"[yellow]Meses:[/yellow] {start_month} - {end_month}")
+    console.print(f"[yellow]Coordenadas:[/yellow] lat={latitude}, lon={longitude}")
+    console.print(f"[yellow]Timezone:[/yellow] {timezone}")
+    console.print(f"[yellow]Destino:[/yellow] data/external/meteo/")
+    console.print()
+    
+    console.rule("[blue]Procesando datos meteorológicos[/blue]", style="blue")
+    console.print()
+    
+    results = {}
+    
+    try:
+        stats = download_meteo_range(
+            start_year=start_year,
+            end_year=end_year,
+            start_month=start_month,
+            end_month=end_month,
+            out_dir=obtener_ruta("data/external/meteo/raw"),
+            latitude=latitude,
+            longitude=longitude,
+            timezone=timezone,
+        )
+        
+        results['meteo'] = {
+            "status": "completado",
+            "stats": stats,
+            "color": "blue",
+            "type": "meteo"
+        }
+        
+        console.print(f"\n[bold green]✓ Descarga de datos meteorológicos completada[/bold green]")
+        console.print(f"[dim]Total: {stats['total']} | Descargados: {stats.get('ok', 0)} | "
+                     f"Omitidos: {stats['skipped']} | Fallidos: {stats['failed']}[/dim]\n")
+        
+    except Exception as e:
+        console.print(f"[bold red]ERROR:[/bold red] {e}")
+        results['meteo'] = {
+            "status": "error",
+            "error": str(e),
+            "color": "blue",
+            "type": "meteo"
+        }
+    
+    return results
+
+
+# =============================================================================
 # Resumen y reportes
 # =============================================================================
 
@@ -177,7 +252,7 @@ def print_summary(results: dict):
     Imprime un resumen consolidado de todas las descargas.
     
     Args:
-        results: Diccionario con resultados de TLC y/o eventos
+        results: Diccionario con resultados de TLC, eventos y/o meteo
     """
     console.print()
     console.rule("[bold cyan]RESUMEN DE DESCARGA MASIVA[/bold cyan]", style="cyan")
@@ -186,6 +261,7 @@ def print_summary(results: dict):
     # Separar resultados por tipo
     tlc_results = {k: v for k, v in results.items() if v.get("type") == "tlc"}
     events_results = {k: v for k, v in results.items() if v.get("type") == "events"}
+    meteo_results = {k: v for k, v in results.items() if v.get("type") == "meteo"}
     
     # Tabla de servicios TLC
     if tlc_results:
@@ -235,7 +311,7 @@ def print_summary(results: dict):
             else:
                 table_tlc.add_row(
                     f"[{color}]{service_name}[/{color}]",
-                    "[red]✗ ERROR[/red]",
+                    "[red] ERROR[/red]",
                     "[dim]-[/dim]",
                     "[dim]-[/dim]",
                     "[dim]-[/dim]",
@@ -300,6 +376,49 @@ def print_summary(results: dict):
         console.print(table_events)
         console.print()
     
+    # Tabla de datos meteorológicos
+    if meteo_results:
+        table_meteo = Table(
+            title="Datos Meteorológicos",
+            show_header=True,
+            header_style="bold blue"
+        )
+        table_meteo.add_column("Fuente", style="blue", width=20)
+        table_meteo.add_column("Estado", justify="center", width=12)
+        table_meteo.add_column("Descargados", justify="right", width=12)
+        table_meteo.add_column("Omitidos", justify="right", width=12)
+        table_meteo.add_column("Fallidos", justify="right", width=12)
+        table_meteo.add_column("Total", justify="right", width=12)
+        
+        for key, result in meteo_results.items():
+            color = result.get("color", "blue")
+            
+            if result["status"] == "completado":
+                stats = result["stats"]
+                # Manejar tanto 'ok' como 'successful' por compatibilidad
+                downloaded = stats.get('ok', stats.get('successful', 0))
+                
+                table_meteo.add_row(
+                    f"[{color}]Open-Meteo NYC[/{color}]",
+                    "[green]✓ OK[/green]",
+                    f"[green]{downloaded}[/green]",
+                    f"[blue]{stats['skipped']}[/blue]",
+                    f"[red]{stats['failed']}[/red]" if stats['failed'] > 0 else "[dim]0[/dim]",
+                    f"{stats['total']}"
+                )
+            else:
+                table_meteo.add_row(
+                    f"[{color}]Open-Meteo NYC[/{color}]",
+                    "[red]✗ ERROR[/red]",
+                    "[dim]-[/dim]",
+                    "[dim]-[/dim]",
+                    "[dim]-[/dim]",
+                    "[dim]-[/dim]"
+                )
+        
+        console.print(table_meteo)
+        console.print()
+    
     # Mensaje final
     total_errors = sum(1 for r in results.values() if r["status"] == "error")
     total_items = len(results)
@@ -328,7 +447,7 @@ def download_all(mode: DownloadMode = DownloadMode.ALL):
     Descarga datos según el modo especificado.
     
     Args:
-        mode: Modo de descarga (all, tlc, events)
+        mode: Modo de descarga (all, tlc, events, meteo)
     """
     results = {}
     
@@ -348,6 +467,10 @@ def download_all(mode: DownloadMode = DownloadMode.ALL):
         events_results = download_all_events()
         results.update(events_results)
     
+    if mode in (DownloadMode.ALL, DownloadMode.METEO):
+        meteo_results = download_all_meteo()
+        results.update(meteo_results)
+    
     # Mostrar resumen
     print_summary(results)
 
@@ -362,15 +485,15 @@ def download_all(mode: DownloadMode = DownloadMode.ALL):
     type=click.Choice([m.value for m in DownloadMode], case_sensitive=False),
     default=DownloadMode.ALL.value,
     show_default=True,
-    help="Modo de descarga: 'all' (TLC + eventos), 'tlc' (solo servicios TLC), 'events' (solo eventos NYC)"
+    help="Modo de descarga: 'all' (TLC + eventos + meteo), 'tlc' (solo servicios TLC), 'events' (solo eventos NYC), 'meteo' (solo datos meteorológicos)"
 )
 def main(mode: str):
     """
-    Descarga masiva de datos de NYC (TLC y/o eventos).
+    Descarga masiva de datos de NYC (TLC, eventos y/o meteorológicos).
     
     Ejemplos de uso:
     
-        # Descargar todo (TLC + eventos)
+        # Descargar todo (TLC + eventos + meteo)
         uv run -m src.extraccion.descarga_masiva
         
         # Solo servicios TLC
@@ -378,6 +501,9 @@ def main(mode: str):
         
         # Solo eventos NYC
         uv run -m src.extraccion.descarga_masiva --mode events
+        
+        # Solo datos meteorológicos
+        uv run -m src.extraccion.descarga_masiva --mode meteo
     """
     download_all(DownloadMode(mode))
 

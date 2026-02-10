@@ -55,3 +55,26 @@ eventos:
   
   socrata_limit: 10000
   timeout_segundos: 60
+
+# Datos meteorológicos de Open-Meteo
+meteo:
+  # Docs: https://open-meteo.com/en/docs/historical-weather-api
+  url_base: "https://archive-api.open-meteo.com/v1/archive"
+
+  # Años a descargar por defecto
+  start_year: 2020
+  end_year: 2025
+  
+  # Meses a descargar por defecto (1-12)
+  start_month: 1
+  end_month: 12
+  
+  # Coordenadas de NYC (Times Square)
+  latitude: 40.7128
+  longitude: -74.0060
+  
+  # Zona horaria
+  timezone: "America/New_York"
+  
+  # Configuración de red
+  timeout: 120

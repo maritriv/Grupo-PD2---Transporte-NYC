@@ -80,8 +80,15 @@ def obtener_config_eventos() -> Dict[str, Any]:
     config = cargar_config()
     return config.get("eventos", {})
 
+def obtener_config_meteo() -> Dict[str, Any]:
+    """
+    Devuelve la configuración de datos meteorológicos.
+    """
+    config = cargar_config()
+    return config.get("meteo", {})
 
 # Cargar configuración al importar el módulo
 config = cargar_config()
 servicios_habilitados = obtener_servicios_habilitados()
 eventos_config = obtener_config_eventos()
+meteo_config = obtener_config_meteo()
