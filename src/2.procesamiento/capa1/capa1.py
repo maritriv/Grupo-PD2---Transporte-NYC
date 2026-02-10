@@ -73,11 +73,11 @@ def main():
     if resumen_total:
         df_final = pd.DataFrame(resumen_total)
 
-        output_folder = Path(__file__).parent / "faseA_resultados"
+        output_folder = Path(__file__).parent / "capa1_resultados"
         output_folder.mkdir(parents=True, exist_ok=True) 
 
-        csv_path = output_folder / "faseA_resultados.csv"
-        md_path = output_folder / "faseA_resultados.md"
+        csv_path = output_folder / "capa1_resultados.csv"
+        md_path = output_folder / "capa1_resultados.md"
          
         # Guardar en CSV y Markdown
         df_final.to_csv(csv_path, index=False)
