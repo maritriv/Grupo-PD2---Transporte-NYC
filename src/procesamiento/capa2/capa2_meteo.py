@@ -104,13 +104,16 @@ def save_layer2_meteo(df: pd.DataFrame, out_dir: Path):
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Guardado particionado estilo Spark: year=YYYY/month=MM/part-00000.parquet
+    # Agrupamos por año y mes para generar un archivo por cada uno
     for (y, m), g in df.groupby(["year", "month"], dropna=False):
-        part_dir = out_dir / f"year={int(y)}" / f"month={int(m)}"
-        part_dir.mkdir(parents=True, exist_ok=True)
-        g.to_parquet(part_dir / "part-00000.parquet", index=False, engine="pyarrow")
+        # Creamos el nombre siguiendo el formato: meteo_2020-01.parquet
+        file_name = f"meteo_{int(y)}-{int(m):02d}.parquet"
+        dest_path = out_dir / file_name
+        
+        # Guardamos directamente en la carpeta out_dir sin subcarpetas
+        g.to_parquet(dest_path, index=False, engine="pyarrow")
 
-    print("\nCapa 2 METEO guardada en:", out_dir)
+    print("\n[OK] Capa 2 METEO guardada como archivos individuales en:", out_dir)
 
 
 def main():
@@ -132,8 +135,8 @@ def main():
         datetime.strptime(args.date_to, "%Y-%m-%d")
 
     project_root = Path(__file__).resolve().parents[3]
-    raw_dir = (project_root / "data" / "external" / "meteo").resolve()
-    out_dir = (project_root / "data" / "standarized" / "meteo").resolve()
+    raw_dir = (project_root / "data" / "external" / "meteo" / "raw").resolve()
+    out_dir = (project_root / "data" / "external" / "meteo" / "standarized").resolve()
 
     print("[DEBUG] raw_dir:", raw_dir)
     print("[DEBUG] out_dir:", out_dir)
