@@ -239,7 +239,7 @@ def main():
 
     # ✅ Ruta robusta e independiente de la carpeta actual y de obtener_ruta:
     project_root = Path(__file__).resolve().parents[2]
-    out_dir = (project_root / "data" / "external" / "meteo").resolve()
+    out_dir = (project_root / "data" / "external" / "meteo" / "raw").resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     console.print()
