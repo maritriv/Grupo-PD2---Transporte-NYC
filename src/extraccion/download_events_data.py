@@ -1,12 +1,14 @@
 # src/extraccion/download_events_data.py
 from __future__ import annotations
+import findspark
+findspark.init()
 
-import argparse
 import csv
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import click
 import requests
 from rich.console import Console
 from rich.panel import Panel
@@ -14,18 +16,28 @@ from rich.table import Table
 
 from pyspark.sql import SparkSession, functions as F
 
+from config.settings import obtener_ruta, eventos_config
 
-# Intentamos usar vuestro sistema de config/rutas
-try:
-    from config.settings import obtener_ruta, config  # type: ignore
-except Exception:  # fallback si alguien ejecuta sin ese módulo
-    config = {}
-    def obtener_ruta(p: str) -> Path:
-        return Path(p)
+
+# =============================
+# Configuración base (desde YAML)
+# =============================
+BASE_URL = eventos_config["url_base"]
+DEFAULT_DATASET = eventos_config["dataset_id"]
+DEFAULT_FROM = eventos_config["date_from"]
+DEFAULT_TO = eventos_config["date_to"]
+
+SOCRATA_LIMIT = eventos_config["socrata_limit"]
+TIMEOUT = eventos_config["timeout_segundos"]
+
+DEFAULT_OUT_DIR = obtener_ruta("data/external/events")
+DEFAULT_OUT_NAME = "events_daily_borough_type"
 
 console = Console()
-BASE = "https://data.cityofnewyork.us"
 
+# -----------------------------
+# Helpers Spark
+# -----------------------------
 def csv_to_parquet(csv_path: Path, parquet_path: Path):
     spark = (
         SparkSession.builder
@@ -49,8 +61,8 @@ def csv_to_parquet(csv_path: Path, parquet_path: Path):
 # Helpers Socrata
 # -----------------------------
 def _fetch_view_metadata(dataset_id: str) -> dict[str, Any]:
-    url = f"{BASE}/api/views/{dataset_id}"
-    r = requests.get(url, timeout=60)
+    url = f"{BASE_URL}/api/views/{dataset_id}"
+    r = requests.get(url, timeout=TIMEOUT)
     r.raise_for_status()
     return r.json()
 
@@ -74,7 +86,11 @@ def _pick_field(columns: list[dict[str, Any]], candidates: list[str]) -> str | N
     return None
 
 
-def _paged_socrata_json(resource_url: str, params: dict[str, Any], limit: int = 50000) -> list[dict[str, Any]]:
+def _paged_socrata_json(
+    resource_url: str,
+    params: dict[str, Any],
+    limit: int = SOCRATA_LIMIT
+) -> list[dict[str, Any]]:
     """
     Socrata suele limitar resultados. Esto pagina con $limit/$offset y devuelve lista de dicts.
     """
@@ -106,8 +122,8 @@ def download_events_aggregated(
     dataset_id: str,
     date_from: str,
     date_to: str,
-    out_dir: Path,
-    out_name: str = "events_daily_borough_type",
+    out_dir: Path = DEFAULT_OUT_DIR,
+    out_name: str = DEFAULT_OUT_NAME,
 ) -> dict[str, Any]:
     """
     Descarga agregado por:
@@ -120,9 +136,16 @@ def download_events_aggregated(
       - CSV (siempre)
       - Parquet (si Spark funciona)
     """
+
     out_dir.mkdir(parents=True, exist_ok=True)
     out_csv = out_dir / f"{out_name}.csv"
     out_parquet = out_dir / f"{out_name}.parquet"
+
+    console.print(f"\n[bold]Descargando eventos NYC[/bold]")
+    console.print(f"[yellow]Dataset:[/yellow] {dataset_id}")
+    console.print(f"[yellow]Periodo:[/yellow] {date_from} → {date_to}")
+    console.print(f"[yellow]Destino:[/yellow] {out_dir}")
+    console.rule(style="dim")
 
     meta = _fetch_view_metadata(dataset_id)
     cols = meta.get("columns", [])
@@ -133,17 +156,17 @@ def download_events_aggregated(
 
     if not start_field:
         raise RuntimeError("No pude detectar columna de inicio (start_...). Cambia dataset o ajusta candidates.")
-
+    
     borough_field = borough_field or "borough"
     type_field = type_field or "event_name"
 
     select = (
-    f"date_trunc_ymd({start_field}) as date,"
-    f"date_extract_hh({start_field}) as hour,"
-    f"{borough_field} as borough,"
-    f"{type_field} as event_type,"
-    f"count(1) as n_events"
-)
+        f"date_trunc_ymd({start_field}) as date,"
+        f"date_extract_hh({start_field}) as hour,"
+        f"{borough_field} as borough,"
+        f"{type_field} as event_type,"
+        f"count(1) as n_events"
+    )
 
     where = (
         f"{start_field} between "
@@ -156,15 +179,19 @@ def download_events_aggregated(
         f"{borough_field}, {type_field}"
     )
 
-    order = "date asc, hour asc"
-
-    url = f"{BASE}/resource/{dataset_id}.json"
-    params = {"$select": select, "$where": where, "$group": group, "$order": order}
-
-    rows = _paged_socrata_json(url, params=params, limit=50000)
+    url = f"{BASE_URL}/resource/{dataset_id}.json"
+    rows = _paged_socrata_json(
+        url,
+        {
+            "$select": select,
+            "$where": where,
+            "$group": group,
+            "$order": "date asc, hour asc",
+        }
+    )
 
     # -------------------------
-    # Guardado CSV (siempre)
+    # Guardar CSV
     # -------------------------
     with open(out_csv, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=["date", "hour","borough", "event_type", "n_events"])
@@ -179,38 +206,14 @@ def download_events_aggregated(
             })
 
     # -------------------------
-    # Guardado Parquet (si Spark funciona)
+    # Guardar Parquet
     # -------------------------
     parquet_ok = True
     try:
-        spark = (
-            SparkSession.builder
-            .appName("PD2-Events-Parquet")
-            .master("local[*]")
-            .getOrCreate()
-        )
-
-        data = []
-        for r in rows:
-            d = (r.get("date") or "")[:10]
-            b = r.get("borough")
-            t = r.get("event_type")
-            n = r.get("n_events")
-            try:
-                n = int(n) if n is not None else None
-            except Exception:
-                n = None
-            data.append((d, b, t, n))
-
-        dfp = spark.createDataFrame(data, ["date", "borough", "event_type", "n_events"])
-        dfp = dfp.withColumn("date", F.to_date("date"))
-
-        dfp.write.mode("overwrite").parquet(str(out_parquet))
-        spark.stop()
-
+        csv_to_parquet(out_csv, out_parquet)
     except Exception as e:
         parquet_ok = False
-        console.print(f"[yellow][WARN][/yellow] No se pudo guardar Parquet (se deja el CSV): {e}")
+        console.print(f"[yellow]WARN:[/yellow] No se pudo generar Parquet: {e}")
 
     return {
         "dataset_id": dataset_id,
@@ -222,72 +225,93 @@ def download_events_aggregated(
     }
 
 
+# =============================
+# CLI (Click)
+# =============================
+@click.command()
+@click.option(
+    "--dataset",
+    default=DEFAULT_DATASET,
+    show_default=True,
+    help="ID del dataset de NYC Open Data (Socrata)"
+)
+@click.option(
+    "--date-from",
+    default=DEFAULT_FROM,
+    show_default=True,
+    help="Fecha inicial (YYYY-MM-DD)"
+)
+@click.option(
+    "--date-to",
+    default=DEFAULT_TO,
+    show_default=True,
+    help="Fecha final (YYYY-MM-DD)"
+)
+@click.option(
+    "--name",
+    "out_name",
+    default=DEFAULT_OUT_NAME,
+    show_default=True,
+    help="Nombre base de los archivos de salida"
+)
+def main(dataset: str, date_from: str, date_to: str, out_name: str):
+    """
+    Descarga eventos de NYC Open Data agregados por día, hora, borough y tipo.
 
-# -----------------------------
-# CLI
-# -----------------------------
-def main():
-    # Defaults desde config.yaml si existe sección "eventos"
-    eventos_cfg = (config.get("eventos") or {}) if isinstance(config, dict) else {}
+    Ejemplos de uso:
 
-    default_dataset = eventos_cfg.get("dataset_id", "bkfu-528j")  # pon aquí el id que decidáis como estándar
-    default_from = eventos_cfg.get("date_from", "2024-01-01")
-    default_to = eventos_cfg.get("date_to", "2025-12-31")
-    default_out_name = eventos_cfg.get("out_name", "events_daily_borough_type")
+        # Usando valores por defecto definidos en config.yaml
+        uv run -m src.extraccion.download_events_data
 
-    p = argparse.ArgumentParser(description="Descarga eventos NYC Open Data (agregado por día/borough/tipo).")
-    p.add_argument("--dataset", default=default_dataset, help="Socrata dataset id (ej: bkfu-528j)")
-    p.add_argument("--from", dest="date_from", default=default_from, help="YYYY-MM-DD")
-    p.add_argument("--to", dest="date_to", default=default_to, help="YYYY-MM-DD")
-    p.add_argument("--name", dest="out_name", default=default_out_name, help="Nombre base del archivo de salida")
-    args = p.parse_args()
+        # Indicando un dataset concreto de NYC Open Data
+        uv run -m src.extraccion.download_events_data --dataset bkfu-528j
 
-    # Validación simple de fechas
+        # Descargando un rango de fechas específico
+        uv run -m src.extraccion.download_events_data \
+            --date-from 2024-06-01 \
+            --date-to 2024-06-30
+
+        # Cambiando el nombre base de los archivos de salida
+        uv run -m src.extraccion.download_events_data \
+            --name events_june_2024
+    """
+
+
+    # Validación de fechas
     try:
-        datetime.strptime(args.date_from, "%Y-%m-%d")
-        datetime.strptime(args.date_to, "%Y-%m-%d")
+        datetime.strptime(date_from, "%Y-%m-%d")
+        datetime.strptime(date_to, "%Y-%m-%d")
     except ValueError:
-        raise SystemExit("❌ Fechas inválidas. Usa formato YYYY-MM-DD")
-
-    out_dir = obtener_ruta("data/external/events")
-
-    console.print()
-    console.print(Panel.fit(
-        "[bold white]NYC EVENTS (Open Data)[/bold white]\n"
-        "[cyan]Descarga y agregado por día/borough/tipo[/cyan]",
-        border_style="bright_blue"
-    ))
-    console.print(f"[yellow]Dataset:[/yellow] {args.dataset}")
-    console.print(f"[yellow]Periodo:[/yellow] {args.date_from} -> {args.date_to}")
-    console.print(f"[yellow]Destino:[/yellow] {out_dir}")
-    console.print()
+        raise click.BadParameter("Formato de fecha inválido (usa YYYY-MM-DD)")
 
     stats = download_events_aggregated(
-        dataset_id=args.dataset,
-        date_from=args.date_from,
-        date_to=args.date_to,
-        out_dir=Path(out_dir),
-        out_name=args.out_name,
+        dataset_id=dataset,
+        date_from=date_from,
+        date_to=date_to,
+        out_name=out_name,
     )
 
-    # Resumen tipo tabla (como vuestro estilo)
-    table = Table(title="Resumen descarga eventos", show_header=True, header_style="bold cyan")
+    table = Table(
+        title="Resumen descarga eventos",
+        show_header=True,
+        header_style="bold cyan"
+    )
     table.add_column("Campo", style="cyan", width=18)
     table.add_column("Valor", style="white")
 
-    table.add_row("dataset_id", str(stats["dataset_id"]))
-    table.add_row("from", str(stats["from"]))
-    table.add_row("to", str(stats["to"]))
-    table.add_row("rows", str(stats["rows"]))
-    table.add_row("out_csv", str(stats["out_csv"]))
+    for k, v in stats.items():
+        table.add_row(k, str(v))
 
+    console.print()
     console.print(table)
     console.print()
-    console.print(Panel.fit(
-        "[bold green]DESCARGA EVENTOS COMPLETADA[/bold green]\n"
-        f"[dim]Filas agregadas: {stats['rows']}[/dim]",
-        border_style="bright_green"
-    ))
+    console.print(
+        Panel.fit(
+            "[bold green]DESCARGA EVENTOS COMPLETADA[/bold green]\n"
+            f"[dim]Filas agregadas: {stats['rows']}[/dim]",
+            border_style="bright_green"
+        )
+    )
 
 
 if __name__ == "__main__":

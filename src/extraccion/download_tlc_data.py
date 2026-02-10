@@ -230,11 +230,11 @@ def main(
     
     Ejemplos de uso:
     
-        uv run -m src.data.download_tlc_data --service yellow
+        uv run -m src.extraccion.download_tlc_data --service yellow
         
-        uv run -m src.data.download_tlc_data -s green --start-year 2024 --end-year 2024
+        uv run -m src.extraccion.download_tlc_data -s green --start-year 2024 --end-year 2024
         
-        uv run -m src.data.download_tlc_data -s fhvhv --start-year 2023 --end-year 2023 --start-month 6 --end-month 8
+        uv run -m src.extraccion.download_tlc_data -s fhvhv --start-year 2023 --end-year 2023 --start-month 6 --end-month 8
     """
     years = range(start_year, end_year + 1)
     months = range(start_month, end_month + 1)

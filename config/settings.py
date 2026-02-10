@@ -3,7 +3,7 @@
 Carga la configuración desde config.yaml
 """
 import yaml
-from typing import List
+from typing import List, Dict, Any
 from pathlib import Path
 
 _RAIZ_PROYECTO = Path(__file__).resolve().parents[1]
@@ -73,7 +73,15 @@ def obtener_servicios_habilitados() -> List[str]:
     servicios = config['servicios']
     return [servicio for servicio in servicios.keys() if servicios[servicio]['habilitado']]
 
+def obtener_config_eventos() -> Dict[str, Any]:
+    """
+    Devuelve la configuración de eventos NYC.
+    """
+    config = cargar_config()
+    return config.get("eventos", {})
+
 
 # Cargar configuración al importar el módulo
 config = cargar_config()
 servicios_habilitados = obtener_servicios_habilitados()
+eventos_config = obtener_config_eventos()

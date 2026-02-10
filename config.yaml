@@ -39,3 +39,14 @@ servicios:
   fhvhv:
     nombre: "High Volume FHV"
     habilitado: true
+
+# Eventos de Nueva York City a descargar
+eventos:
+  url_base: "https://data.cityofnewyork.us"
+  dataset_id: "bkfu-528j"
+  
+  date_from: "2024-01-01"
+  date_to: "2025-12-31"
+  
+  socrata_limit: 50000
+  timeout_segundos: 60
