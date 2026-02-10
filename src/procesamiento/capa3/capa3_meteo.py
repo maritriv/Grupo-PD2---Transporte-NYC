@@ -22,25 +22,19 @@ def read_layer2_meteo(layer2_path: Path) -> pd.DataFrame:
     if not layer2_path.exists():
         raise FileNotFoundError(f"No existe {layer2_path}")
 
-    files = sorted(layer2_path.rglob("part-*.parquet"))
+    # Ahora buscamos directamente los archivos con el patrón que creamos: meteo_YYYY-MM.parquet
+    files = sorted(layer2_path.glob("meteo_*.parquet"))
+    
+    # Si no encuentra "meteo_...", intenta con cualquier parquet por si acaso
     if not files:
-        files = sorted(layer2_path.rglob("*.parquet"))
+        files = sorted(layer2_path.glob("*.parquet"))
+        
     if not files:
         raise FileNotFoundError(f"No hay parquets dentro de {layer2_path}")
 
+    print(f"[INFO] Leyendo {len(files)} archivos de Capa 2...")
     dfs = [pd.read_parquet(fp) for fp in files]
     df = pd.concat(dfs, ignore_index=True)
-
-    # tipos consistentes
-    if "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
-    if "hour" in df.columns:
-        df["hour"] = pd.to_numeric(df["hour"], errors="coerce").astype("Int64")
-    if "year" in df.columns:
-        df["year"] = pd.to_numeric(df["year"], errors="coerce").astype("Int64")
-    if "month" in df.columns:
-        df["month"] = pd.to_numeric(df["month"], errors="coerce").astype("Int64")
-
     return df
 
 
@@ -193,8 +187,8 @@ def main():
         datetime.strptime(args.date_to, "%Y-%m-%d")
 
     project_root = Path(__file__).resolve().parents[3]
-    layer2_path = (project_root / "data" / "standarized" / "meteo").resolve()
-    out_base = (project_root / "data" / "aggregated" / "meteo").resolve()
+    layer2_path = (project_root / "data" / "external" / "meteo" / "standarized").resolve()
+    out_base = (project_root / "data" / "external" / "meteo" / "aggregated").resolve()
 
     print("[DEBUG] layer2_path:", layer2_path)
     print("[DEBUG] out_base:", out_base)
