@@ -10,6 +10,11 @@ from config.settings import obtener_ruta
 DEBUG = False  # pon True para ver schemas/previews
 
 
+# EJECUTAR : wget -P data/external/ https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv
+
+
+
+
 # ---------------------------------------------------------------------
 # Spark (WSL / Linux friendly)
 # ---------------------------------------------------------------------
