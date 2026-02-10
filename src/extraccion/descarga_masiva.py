@@ -1,20 +1,30 @@
 # src/extraccion/descarga_masiva.py
+from enum import Enum
+from typing import Optional
+
+import click
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+
 from src.extraccion.download_tlc_data import download_service_data
-from config.settings import obtener_ruta, config, servicios_habilitados
+from src.extraccion.download_events_data import download_events_range
+from config.settings import obtener_ruta, config, servicios_habilitados, eventos_config
 
 
 console = Console()
 
-# | Tipo servicio           | Descripción breve                                                | Años aproximados disponibles               |
-# | ----------------------- | ---------------------------------------------------------------- | ------------------------------------------ |
-# | Yellow Taxi             | Taxis amarillos tradicionales en toda la ciudad.                 | Desde 2009–2010 hasta 2025+.               |
-# | Green Taxi              | Taxis "boro" (fuera de Manhattan core).                          | Desde ~2013–2014 hasta 2025+.              |
-# | FHV                     | For-Hire Vehicles (livery, black car, etc.) no high volume.      | Desde ~2015 hasta 2025+.                   |
-# | High Volume FHV (HVFHV) | Uber, Lyft y otras bases de "alto volumen".                      | Desde 2019 hasta 2025+.                    |
 
+class DownloadMode(str, Enum):
+    """Modos de descarga disponibles."""
+    ALL = "all"
+    TLC = "tlc"
+    EVENTS = "events"
+
+
+# =============================================================================
+# Descarga de servicios TLC
+# =============================================================================
 
 def download_all_services():
     """
@@ -29,12 +39,12 @@ def download_all_services():
 
     services = {
         k: v for k, v in services.items()
-        if k in servicios_habilitados # Filtrar por los servicios habilitados
+        if k in servicios_habilitados  # Filtrar por los servicios habilitados
     }
     
     total_services = len(services)
 
-    # Configuracion descarga
+    # Configuración descarga
     descarga_config = config['descarga']
     start_year = descarga_config['start_year']
     end_year = descarga_config['end_year']
@@ -44,7 +54,7 @@ def download_all_services():
     console.print()
     console.print(Panel.fit(
         "[bold white]NYC TAXI & LIMOUSINE COMMISSION[/bold white]\n"
-        "[cyan]Descarga Masiva de Datos[/cyan]",
+        "[cyan]Descarga de Datos TLC[/cyan]",
         border_style="bright_blue"
     ))
     
@@ -71,7 +81,8 @@ def download_all_services():
             results[service_key] = {
                 "status": "completado",
                 "stats": stats,
-                "color": color
+                "color": color,
+                "type": "tlc"
             }
             console.print(f"[bold green]{description} - Completado[/bold green]\n")
             
@@ -81,99 +92,295 @@ def download_all_services():
             results[service_key] = {
                 "status": "error",
                 "error": str(e),
-                "color": color
+                "color": color,
+                "type": "tlc"
             }
             continue
     
-    # Resumen final
+    return results
+
+
+# =============================================================================
+# Descarga de eventos NYC
+# =============================================================================
+
+def download_all_events():
+    """
+    Descarga datos de eventos de NYC Open Data.
+    """
+    # Configuración descarga
+    start_year = eventos_config['start_year']
+    end_year = eventos_config['end_year']
+    start_month = eventos_config['start_month']
+    end_month = eventos_config['end_month']
+    
+    dataset_id = eventos_config['dataset_id']
+    
+    # Header
+    console.print()
+    console.print(Panel.fit(
+        "[bold white]NYC OPEN DATA[/bold white]\n"
+        "[cyan]Descarga de Eventos[/cyan]",
+        border_style="bright_magenta"
+    ))
+    
+    console.print(f"[yellow]Período:[/yellow] {start_year} - {end_year}")
+    console.print(f"[yellow]Meses:[/yellow] {start_month} - {end_month}")
+    console.print(f"[yellow]Dataset:[/yellow] {dataset_id}")
+    console.print(f"[yellow]Destino:[/yellow] data/external/events/")
+    console.print()
+    
+    console.rule("[magenta]Procesando eventos[/magenta]", style="magenta")
+    console.print()
+    
+    results = {}
+    
+    try:
+        stats = download_events_range(
+            dataset_id=dataset_id,
+            start_year=start_year,
+            end_year=end_year,
+            start_month=start_month,
+            end_month=end_month,
+            out_dir=obtener_ruta("data/external/events")
+        )
+        
+        results['events'] = {
+            "status": "completado",
+            "stats": stats,
+            "color": "magenta",
+            "type": "events"
+        }
+        
+        console.print(f"\n[bold green] Descarga de eventos completada[/bold green]")
+        console.print(f"[dim]Total: {stats['total']} | Descargados: {stats.get('ok', 0)} | "
+                     f"Omitidos: {stats['skipped']} | Fallidos: {stats['failed']}[/dim]\n")
+        
+    except Exception as e:
+        console.print(f"[bold red]ERROR:[/bold red] {e}")
+        results['events'] = {
+            "status": "error",
+            "error": str(e),
+            "color": "magenta",
+            "type": "events"
+        }
+    
+    return results
+
+
+# =============================================================================
+# Resumen y reportes
+# =============================================================================
+
+def print_summary(results: dict):
+    """
+    Imprime un resumen consolidado de todas las descargas.
+    
+    Args:
+        results: Diccionario con resultados de TLC y/o eventos
+    """
     console.print()
     console.rule("[bold cyan]RESUMEN DE DESCARGA MASIVA[/bold cyan]", style="cyan")
     console.print()
     
-    # Crear tabla de resumen
-    table = Table(title="Estadísticas por Servicio", show_header=True, header_style="bold cyan")
-    table.add_column("Servicio", style="cyan", width=20)
-    table.add_column("Estado", justify="center", width=12)
-    table.add_column("Descargados", justify="right", width=12)
-    table.add_column("Omitidos", justify="right", width=12)
-    table.add_column("Fallidos", justify="right", width=12)
-    table.add_column("Total", justify="right", width=12)
+    # Separar resultados por tipo
+    tlc_results = {k: v for k, v in results.items() if v.get("type") == "tlc"}
+    events_results = {k: v for k, v in results.items() if v.get("type") == "events"}
     
-    # Totales generales
-    total_downloaded = 0
-    total_skipped = 0
-    total_failed = 0
-    total_files = 0
-    services_with_errors = 0
-    
-    for service_key, result in results.items():
-        service_name = services[service_key][0].split(' (')[0]  # Nombre corto
-        color = result["color"]
+    # Tabla de servicios TLC
+    if tlc_results:
+        table_tlc = Table(
+            title="Servicios TLC",
+            show_header=True,
+            header_style="bold cyan"
+        )
+        table_tlc.add_column("Servicio", style="cyan", width=20)
+        table_tlc.add_column("Estado", justify="center", width=12)
+        table_tlc.add_column("Descargados", justify="right", width=12)
+        table_tlc.add_column("Omitidos", justify="right", width=12)
+        table_tlc.add_column("Fallidos", justify="right", width=12)
+        table_tlc.add_column("Total", justify="right", width=12)
         
-        if result["status"] == "completado":
-            stats = result["stats"]
-            table.add_row(
-                f"[{color}]{service_name}[/{color}]",
-                "[green]OK[/green]",
-                f"[green]{stats['successful']}[/green]",
-                f"[blue]{stats['skipped']}[/blue]",
-                f"[red]{stats['failed']}[/red]" if stats['failed'] > 0 else "[dim]0[/dim]",
-                f"{stats['total']}"
-            )
-            total_downloaded += stats['successful']
-            total_skipped += stats['skipped']
-            total_failed += stats['failed']
-            total_files += stats['total']
+        total_downloaded = 0
+        total_skipped = 0
+        total_failed = 0
+        total_files = 0
+        services_with_errors = 0
+        
+        service_names = {
+            'yellow': 'Yellow Taxi',
+            'green': 'Green Taxi',
+            'fhv': 'FHV',
+            'fhvhv': 'HVFHV'
+        }
+        
+        for service_key, result in tlc_results.items():
+            service_name = service_names.get(service_key, service_key)
+            color = result.get("color", "white")
             
+            if result["status"] == "completado":
+                stats = result["stats"]
+                table_tlc.add_row(
+                    f"[{color}]{service_name}[/{color}]",
+                    "[green] OK[/green]",
+                    f"[green]{stats['successful']}[/green]",
+                    f"[blue]{stats['skipped']}[/blue]",
+                    f"[red]{stats['failed']}[/red]" if stats['failed'] > 0 else "[dim]0[/dim]",
+                    f"{stats['total']}"
+                )
+                total_downloaded += stats['successful']
+                total_skipped += stats['skipped']
+                total_failed += stats['failed']
+                total_files += stats['total']
+            else:
+                table_tlc.add_row(
+                    f"[{color}]{service_name}[/{color}]",
+                    "[red]✗ ERROR[/red]",
+                    "[dim]-[/dim]",
+                    "[dim]-[/dim]",
+                    "[dim]-[/dim]",
+                    "[dim]-[/dim]"
+                )
+                services_with_errors += 1
+        
+        # Añadir fila de totales
+        table_tlc.add_section()
+        table_tlc.add_row(
+            "[bold]TOTAL TLC[/bold]",
+            "",
+            f"[bold green]{total_downloaded}[/bold green]",
+            f"[bold blue]{total_skipped}[/bold blue]",
+            f"[bold red]{total_failed}[/bold red]" if total_failed > 0 else "[bold dim]0[/bold dim]",
+            f"[bold]{total_files}[/bold]"
+        )
+        
+        console.print(table_tlc)
+        console.print()
+    
+    # Tabla de eventos
+    if events_results:
+        table_events = Table(
+            title="Eventos NYC",
+            show_header=True,
+            header_style="bold magenta"
+        )
+        table_events.add_column("Dataset", style="magenta", width=20)
+        table_events.add_column("Estado", justify="center", width=12)
+        table_events.add_column("Descargados", justify="right", width=12)
+        table_events.add_column("Omitidos", justify="right", width=12)
+        table_events.add_column("Fallidos", justify="right", width=12)
+        table_events.add_column("Total", justify="right", width=12)
+        
+        for key, result in events_results.items():
+            color = result.get("color", "magenta")
             
-        else:
-            table.add_row(
-                f"[{color}]{service_name}[/{color}]",
-                "[red]ERROR[/red]",
-                "[dim]-[/dim]",
-                "[dim]-[/dim]",
-                "[dim]-[/dim]",
-                "[dim]-[/dim]"
-            )
-            services_with_errors += 1
+            if result["status"] == "completado":
+                stats = result["stats"]
+                # Manejar tanto 'ok' como 'successful' por compatibilidad
+                downloaded = stats.get('ok', stats.get('successful', 0))
+                
+                table_events.add_row(
+                    f"[{color}]NYC Events[/{color}]",
+                    "[green] OK[/green]",
+                    f"[green]{downloaded}[/green]",
+                    f"[blue]{stats['skipped']}[/blue]",
+                    f"[red]{stats['failed']}[/red]" if stats['failed'] > 0 else "[dim]0[/dim]",
+                    f"{stats['total']}"
+                )
+            else:
+                table_events.add_row(
+                    f"[{color}]NYC Events[/{color}]",
+                    "[red]✗ ERROR[/red]",
+                    "[dim]-[/dim]",
+                    "[dim]-[/dim]",
+                    "[dim]-[/dim]",
+                    "[dim]-[/dim]"
+                )
+        
+        console.print(table_events)
+        console.print()
     
-    # Añadir fila de totales
-    table.add_section()
-    table.add_row(
-        "[bold]TOTAL[/bold]",
-        "",
-        f"[bold green]{total_downloaded}[/bold green]",
-        f"[bold blue]{total_skipped}[/bold blue]",
-        f"[bold red]{total_failed}[/bold red]" if total_failed > 0 else "[bold dim]0[/bold dim]",
-        f"[bold]{total_files}[/bold]"
-    )
+    # Mensaje final
+    total_errors = sum(1 for r in results.values() if r["status"] == "error")
+    total_items = len(results)
     
-    console.print(table)
-    console.print()
-    
-    # Mensaje final según el resultado
-    if services_with_errors == 0 and total_failed == 0:
+    if total_errors == 0:
         console.print(Panel.fit(
-            "[bold green]DESCARGA MASIVA COMPLETADA EXITOSAMENTE[/bold green]\n"
-            f"[dim]Total de archivos procesados: {total_files}[/dim]",
+            "[bold green] DESCARGA MASIVA COMPLETADA EXITOSAMENTE[/bold green]",
             border_style="bright_green"
-        ))
-    elif services_with_errors > 0:
-        console.print(Panel.fit(
-            f"[bold yellow]DESCARGA COMPLETADA CON ADVERTENCIAS[/bold yellow]\n"
-            f"[dim]Servicios con problemas: {services_with_errors}/{total_services}[/dim]\n"
-            f"[dim]Archivos fallidos: {total_failed}[/dim]",
-            border_style="yellow"
         ))
     else:
         console.print(Panel.fit(
-            f"[bold yellow]DESCARGA COMPLETADA CON ERRORES MENORES[/bold yellow]\n"
-            f"[dim]Archivos fallidos: {total_failed}/{total_files}[/dim]",
+            f"[bold yellow]⚠ DESCARGA COMPLETADA CON ADVERTENCIAS[/bold yellow]\n"
+            f"[dim]Items con problemas: {total_errors}/{total_items}[/dim]",
             border_style="yellow"
         ))
     
     console.print()
 
 
+# =============================================================================
+# Función principal
+# =============================================================================
+
+def download_all(mode: DownloadMode = DownloadMode.ALL):
+    """
+    Descarga datos según el modo especificado.
+    
+    Args:
+        mode: Modo de descarga (all, tlc, events)
+    """
+    results = {}
+    
+    # Header global
+    console.print()
+    console.print(Panel.fit(
+        "[bold white]NYC DATA PIPELINE[/bold white]\n"
+        "[cyan]Sistema de Descarga Masiva[/cyan]",
+        border_style="bright_cyan"
+    ))
+    
+    if mode in (DownloadMode.ALL, DownloadMode.TLC):
+        tlc_results = download_all_services()
+        results.update(tlc_results)
+    
+    if mode in (DownloadMode.ALL, DownloadMode.EVENTS):
+        events_results = download_all_events()
+        results.update(events_results)
+    
+    # Mostrar resumen
+    print_summary(results)
+
+
+# =============================================================================
+# CLI
+# =============================================================================
+
+@click.command()
+@click.option(
+    "--mode",
+    type=click.Choice([m.value for m in DownloadMode], case_sensitive=False),
+    default=DownloadMode.ALL.value,
+    show_default=True,
+    help="Modo de descarga: 'all' (TLC + eventos), 'tlc' (solo servicios TLC), 'events' (solo eventos NYC)"
+)
+def main(mode: str):
+    """
+    Descarga masiva de datos de NYC (TLC y/o eventos).
+    
+    Ejemplos de uso:
+    
+        # Descargar todo (TLC + eventos)
+        uv run -m src.extraccion.descarga_masiva
+        
+        # Solo servicios TLC
+        uv run -m src.extraccion.descarga_masiva --mode tlc
+        
+        # Solo eventos NYC
+        uv run -m src.extraccion.descarga_masiva --mode events
+    """
+    download_all(DownloadMode(mode))
+
+
 if __name__ == "__main__":
-    download_all_services()
+    main()
