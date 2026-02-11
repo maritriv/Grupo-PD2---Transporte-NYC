@@ -171,7 +171,7 @@ Pasos necesarios para instalar el proyecto. Descripción paso a paso de cómo po
 **1.** Clonar el repositorio:  
 
 ```
-git clone <URL_DEL_REPO>
+git clone https://github.com/maritriv/Grupo-PD2---Transporte-NYC.git
 cd Grupo-PD2---Transporte-NYC
 ```
 
