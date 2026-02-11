@@ -87,8 +87,48 @@ def obtener_config_meteo() -> Dict[str, Any]:
     config = cargar_config()
     return config.get("meteo", {})
 
+def obtener_config_minio() -> Dict[str, Any]:
+    """
+    Devuelve la configuración de MinIO.
+    """
+    config = cargar_config()
+    return config.get("minio", {})
+
+def obtener_bucket_default() -> str:
+    """
+    Obtiene el bucket por defecto de MinIO.
+    """
+    config_minio = obtener_config_minio()
+    return config_minio.get("default_bucket", "nyc-tlc-data")
+
+def obtener_prefijo_minio(tipo: str) -> str:
+    """
+    Obtiene el prefijo de MinIO para un tipo de dato.
+    
+    Args:
+        tipo: Tipo de dato ('raw', 'processed', 'outputs', 'temp')
+    
+    Returns:
+        Prefijo correspondiente
+    
+    Ejemplos:
+        obtener_prefijo_minio('raw')       # 'raw'
+        obtener_prefijo_minio('processed') # 'processed'
+    """
+    config_minio = obtener_config_minio()
+    prefijos = config_minio.get("prefijos", {})
+    
+    if tipo not in prefijos:
+        raise ValueError(
+            f"Prefijo '{tipo}' no encontrado en config.yaml. "
+            f"Disponibles: {list(prefijos.keys())}"
+        )
+    
+    return prefijos[tipo]
+
 # Cargar configuración al importar el módulo
 config = cargar_config()
 servicios_habilitados = obtener_servicios_habilitados()
 eventos_config = obtener_config_eventos()
 meteo_config = obtener_config_meteo()
+minio_config = obtener_config_minio()

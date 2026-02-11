@@ -1,6 +1,9 @@
 # Data
 data/
 
+# Credenciales MinIO
+credentials.json
+
 # Outputs generados (figuras, plots, etc.)
 outputs/
 
