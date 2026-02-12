@@ -38,7 +38,7 @@ class MinioManager:
         self.default_bucket = "pd2"
         self.base_dir = "mcbrides/"
         
-        logger.info(f"Cliente MinIO inicializado. Endpoint: {self.credentials['endpoint']}")
+        logger.info(f"Cliente MinIO inicializado.")
     
     def _cargar_credenciales(self, path: Path) -> Dict[str, Any]:
         """Carga las credenciales desde el archivo JSON."""
@@ -54,8 +54,8 @@ class MinioManager:
         """Crea y retorna el cliente de MinIO."""
         return Minio(
             endpoint="play.min.io",
-            access_key=self.credentials["access_key"],
-            secret_key=self.credentials["secret_key"],
+            access_key=self.credentials["accessKey"],
+            secret_key=self.credentials["secretKey"],
             secure=self.credentials.get("secure", True)
         )
     
@@ -276,7 +276,7 @@ def obtener_minio_manager() -> MinioManager:
         Instancia de MinioManager
         
     Ejemplos:
-        >>> from config.minio_client import obtener_minio_manager
+        >>> from config.minio_manager import obtener_minio_manager
         >>> minio = obtener_minio_manager()
         >>> minio.subir_archivo("datos.csv")
     """
