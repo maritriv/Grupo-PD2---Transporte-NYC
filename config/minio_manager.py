@@ -9,8 +9,6 @@ from minio import Minio
 from minio.error import S3Error
 import logging
 
-from config.settings import obtener_bucket_default
-
 logger = logging.getLogger(__name__)
 
 
@@ -29,24 +27,18 @@ class MinioManager:
         >>> archivos = minio.listar_archivos("mi-bucket", prefix="path/")
     """
     
-    def __init__(self, default_bucket: str, credentials_path: Optional[Path] = None):
+    def __init__(self):
         """
         Inicializa el cliente de MinIO.
-        
-        Args:
-            credentials_path: Ruta al archivo credentials.json
-                            Si no se proporciona, busca en la raíz del proyecto
-            default_bucket: Nombre del bucket por defecto
         """
-        if credentials_path is None:
-            # Asumir que está en la raíz del proyecto
-            credentials_path = Path(__file__).resolve().parents[1] / "credentials.json"
+        credentials_path = Path(__file__).resolve().parents[1] / "credentials.json"
         
         self.credentials = self._cargar_credenciales(credentials_path)
         self.client = self._crear_cliente()
-        self.default_bucket = default_bucket
+        self.default_bucket = "pd2"
+        self.base_dir = "mcbrides/"
         
-        logger.info(f"Cliente MinIO inicializado. Endpoint: {self.credentials['endpoint']}")
+        logger.info(f"Cliente MinIO inicializado.")
     
     def _cargar_credenciales(self, path: Path) -> Dict[str, Any]:
         """Carga las credenciales desde el archivo JSON."""
@@ -62,37 +54,14 @@ class MinioManager:
         """Crea y retorna el cliente de MinIO."""
         return Minio(
             endpoint="play.min.io",
-            access_key=self.credentials["access_key"],
-            secret_key=self.credentials["secret_key"],
+            access_key=self.credentials["accessKey"],
+            secret_key=self.credentials["secretKey"],
             secure=self.credentials.get("secure", True)
         )
-    
-    def crear_bucket(self, bucket_name: str) -> bool:
-        """
-        Crea un bucket si no existe.
-        
-        Args:
-            bucket_name: Nombre del bucket
-            
-        Returns:
-            True si se creó el bucket, False si ya existía
-        """
-        try:
-            if not self.client.bucket_exists(bucket_name):
-                self.client.make_bucket(bucket_name)
-                logger.info(f"Bucket '{bucket_name}' creado exitosamente")
-                return True
-            else:
-                logger.info(f"Bucket '{bucket_name}' ya existe")
-                return False
-        except S3Error as e:
-            logger.error(f"Error al crear bucket '{bucket_name}': {e}")
-            raise
     
     def subir_archivo(
         self,
         archivo_local: str | Path,
-        bucket_name: Optional[str] = None,
         objeto_nombre: Optional[str] = None,
         metadata: Optional[Dict[str, str]] = None
     ) -> str:
@@ -101,7 +70,6 @@ class MinioManager:
         
         Args:
             archivo_local: Ruta del archivo local a subir
-            bucket_name: Nombre del bucket (usa default_bucket si no se especifica)
             objeto_nombre: Nombre del objeto en MinIO (usa el nombre del archivo si no se especifica)
             metadata: Metadatos opcionales para el objeto
             
@@ -109,23 +77,17 @@ class MinioManager:
             Nombre del objeto subido
             
         Ejemplos:
-            >>> minio.subir_archivo("data/raw/datos.csv", "mi-bucket", "procesados/datos.csv")
-            >>> minio.subir_archivo("informe.pdf")  # Usa bucket por defecto
+            >>> minio.subir_archivo("data/raw/datos.csv", "procesados/datos.csv")
+            >>> minio.subir_archivo("informe.pdf")
         """
         archivo_local = Path(archivo_local)
-        bucket_name = bucket_name or self.default_bucket
-        objeto_nombre = objeto_nombre or archivo_local.name
-        
-        if not bucket_name:
-            raise ValueError("Se debe especificar bucket_name o configurar default_bucket")
+        bucket_name = self.default_bucket
+        objeto_nombre = self.base_dir + objeto_nombre or archivo_local.name
         
         if not archivo_local.exists():
             raise FileNotFoundError(f"Archivo local no encontrado: {archivo_local}")
         
         try:
-            # Crear bucket si no existe
-            self.crear_bucket(bucket_name)
-            
             # Subir archivo
             self.client.fput_object(
                 bucket_name=bucket_name,
@@ -143,7 +105,6 @@ class MinioManager:
     
     def descargar_archivo(
         self,
-        bucket_name: str,
         objeto_nombre: str,
         archivo_destino: str | Path
     ) -> Path:
@@ -151,7 +112,6 @@ class MinioManager:
         Descarga un archivo desde MinIO.
         
         Args:
-            bucket_name: Nombre del bucket
             objeto_nombre: Nombre del objeto en MinIO
             archivo_destino: Ruta donde guardar el archivo
             
@@ -162,6 +122,7 @@ class MinioManager:
             >>> minio.descargar_archivo("mi-bucket", "datos/file.csv", "local/file.csv")
         """
         archivo_destino = Path(archivo_destino)
+        bucket_name = self.default_bucket
         
         # Crear directorio destino si no existe
         archivo_destino.parent.mkdir(parents=True, exist_ok=True)
@@ -182,7 +143,6 @@ class MinioManager:
     
     def listar_archivos(
         self,
-        bucket_name: Optional[str] = None,
         prefix: str = "",
         recursive: bool = True
     ) -> List[Dict[str, Any]]:
@@ -190,7 +150,6 @@ class MinioManager:
         Lista los archivos en un bucket.
         
         Args:
-            bucket_name: Nombre del bucket (usa default_bucket si no se especifica)
             prefix: Prefijo para filtrar objetos
             recursive: Si True, lista recursivamente
             
@@ -198,14 +157,12 @@ class MinioManager:
             Lista de diccionarios con información de cada objeto
             
         Ejemplos:
-            >>> archivos = minio.listar_archivos("mi-bucket", prefix="datos/")
+            >>> archivos = minio.listar_archivos(prefix="datos/")
             >>> for arch in archivos:
             ...     print(f"{arch['nombre']} - {arch['tamaño']} bytes")
         """
-        bucket_name = bucket_name or self.default_bucket
-        
-        if not bucket_name:
-            raise ValueError("Se debe especificar bucket_name o configurar default_bucket")
+        bucket_name = self.default_bucket
+        prefix = self.base_dir + prefix
         
         try:
             objetos = self.client.list_objects(
@@ -231,17 +188,18 @@ class MinioManager:
             logger.error(f"Error al listar archivos: {e}")
             raise
     
-    def eliminar_archivo(self, bucket_name: str, objeto_nombre: str) -> bool:
+    def eliminar_archivo(self, objeto_nombre: str) -> bool:
         """
         Elimina un archivo de MinIO.
         
         Args:
-            bucket_name: Nombre del bucket
             objeto_nombre: Nombre del objeto a eliminar
             
         Returns:
             True si se eliminó exitosamente
         """
+        bucket_name = self.default_bucket
+        objeto_nombre = self.base_dir + objeto_nombre
         try:
             self.client.remove_object(bucket_name, objeto_nombre)
             logger.info(f"Archivo eliminado: {bucket_name}/{objeto_nombre}")
@@ -251,17 +209,18 @@ class MinioManager:
             logger.error(f"Error al eliminar archivo: {e}")
             raise
     
-    def archivo_existe(self, bucket_name: str, objeto_nombre: str) -> bool:
+    def archivo_existe(self, objeto_nombre: str) -> bool:
         """
         Verifica si un archivo existe en MinIO.
         
         Args:
-            bucket_name: Nombre del bucket
             objeto_nombre: Nombre del objeto
             
         Returns:
             True si el archivo existe, False en caso contrario
         """
+        bucket_name = self.default_bucket
+        objeto_nombre = self.base_dir + objeto_nombre
         try:
             self.client.stat_object(bucket_name, objeto_nombre)
             return True
@@ -270,47 +229,9 @@ class MinioManager:
                 return False
             raise
     
-    def obtener_url_presigned(
-        self,
-        bucket_name: str,
-        objeto_nombre: str,
-        expiracion_segundos: int = 3600
-    ) -> str:
-        """
-        Genera una URL pre-firmada para acceso temporal al archivo.
-        
-        Args:
-            bucket_name: Nombre del bucket
-            objeto_nombre: Nombre del objeto
-            expiracion_segundos: Tiempo de expiración en segundos (default: 1 hora)
-            
-        Returns:
-            URL pre-firmada
-            
-        Ejemplos:
-            >>> url = minio.obtener_url_presigned("mi-bucket", "informe.pdf", 7200)
-            >>> print(f"Compartir: {url}")
-        """
-        try:
-            from datetime import timedelta
-            
-            url = self.client.presigned_get_object(
-                bucket_name=bucket_name,
-                object_name=objeto_nombre,
-                expires=timedelta(seconds=expiracion_segundos)
-            )
-            
-            logger.info(f"URL generada para {bucket_name}/{objeto_nombre} (expira en {expiracion_segundos}s)")
-            return url
-            
-        except S3Error as e:
-            logger.error(f"Error al generar URL presigned: {e}")
-            raise
-    
     def subir_directorio(
         self,
         directorio_local: str | Path,
-        bucket_name: Optional[str] = None,
         prefijo_destino: str = ""
     ) -> List[str]:
         """
@@ -325,7 +246,8 @@ class MinioManager:
             Lista de nombres de objetos subidos
         """
         directorio_local = Path(directorio_local)
-        bucket_name = bucket_name or self.default_bucket
+        bucket_name = self.default_bucket
+        prefijo_destino = self.base_dir + prefijo_destino
         
         if not directorio_local.is_dir():
             raise ValueError(f"{directorio_local} no es un directorio válido")
@@ -354,9 +276,8 @@ def obtener_minio_manager() -> MinioManager:
         Instancia de MinioManager
         
     Ejemplos:
-        >>> from config.minio_client import obtener_minio_manager
+        >>> from config.minio_manager import obtener_minio_manager
         >>> minio = obtener_minio_manager()
         >>> minio.subir_archivo("datos.csv")
     """
-    bucket_por_defecto = obtener_bucket_default()
-    return MinioManager(default_bucket=bucket_por_defecto)
+    return MinioManager()
