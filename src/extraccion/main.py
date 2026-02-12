@@ -227,7 +227,7 @@ def download_all_meteo():
             "type": "meteo"
         }
         
-        console.print(f"\n[bold green]✓ Descarga de datos meteorológicos completada[/bold green]")
+        console.print(f"\n[bold green] Descarga de datos meteorológicos completada[/bold green]")
         console.print(f"[dim]Total: {stats['total']} | Descargados: {stats.get('ok', 0)} | "
                      f"Omitidos: {stats['skipped']} | Fallidos: {stats['failed']}[/dim]\n")
         
@@ -400,7 +400,7 @@ def print_summary(results: dict):
                 
                 table_meteo.add_row(
                     f"[{color}]Open-Meteo NYC[/{color}]",
-                    "[green]✓ OK[/green]",
+                    "[green] OK[/green]",
                     f"[green]{downloaded}[/green]",
                     f"[blue]{stats['skipped']}[/blue]",
                     f"[red]{stats['failed']}[/red]" if stats['failed'] > 0 else "[dim]0[/dim]",
