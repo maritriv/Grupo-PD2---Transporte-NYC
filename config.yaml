@@ -5,20 +5,6 @@ rutas:
   data: "data"
   outputs: "outputs"
 
-# Configuración de MinIO (Object Storage)
-minio:
-  # Las credenciales se cargan desde credentials.json en la raíz del proyecto
-  
-  # Bucket por defecto para operaciones
-  default_bucket: "nyc-tlc-data"
-  
-  # Prefijos para organizar datos
-  prefijos:
-    raw: "raw"           # Datos sin procesar
-    processed: "processed"  # Datos procesados
-    outputs: "outputs"   # Resultados finales
-    temp: "temp"         # Archivos temporales
-
 # Configuración de descarga
 descarga:
   # Años a descargar por defecto
