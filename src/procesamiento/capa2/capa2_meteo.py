@@ -19,6 +19,23 @@ DEBUG = False  # True para ver previews
 
 
 def read_raw_meteo(in_dir: Path, base_name: str = "meteo_hourly_nyc") -> pd.DataFrame:
+    """
+    Lee datos RAW de meteo en dos formatos posibles:
+
+    1) Formato antiguo (1 archivo):
+        - {base_name}.parquet  o  {base_name}.csv
+
+    2) Formato nuevo (muchos archivos mensuales):
+        - meteo_YYYY_MM.parquet (y opcionalmente .parquet.gz)
+        - (si quisieras) meteo_YYYY_MM.csv (y .csv.gz)
+    """
+    in_dir = Path(in_dir).resolve()
+    if not in_dir.exists():
+        raise FileNotFoundError(f"No existe el directorio RAW: {in_dir}")
+
+    # -------------------------
+    # 1) Intento: formato antiguo (un solo fichero)
+    # -------------------------
     parquet_path = in_dir / f"{base_name}.parquet"
     csv_path = in_dir / f"{base_name}.csv"
 
@@ -27,7 +44,34 @@ def read_raw_meteo(in_dir: Path, base_name: str = "meteo_hourly_nyc") -> pd.Data
     if csv_path.exists():
         return pd.read_csv(csv_path)
 
-    raise FileNotFoundError(f"No encuentro {base_name}.parquet ni {base_name}.csv en {in_dir}")
+    # -------------------------
+    # 2) Formato nuevo: ficheros mensuales
+    # -------------------------
+    # Primero Parquet (mejor)
+    files = sorted(in_dir.glob("meteo_*.parquet"))
+    if not files:
+        # Si en algún momento guardas comprimido como .parquet.gz
+        files = sorted(in_dir.glob("meteo_*.parquet.gz"))
+
+    if files:
+        print(f"[INFO] Leyendo {len(files)} archivos RAW mensuales (parquet)...")
+        dfs = [pd.read_parquet(fp) for fp in files]
+        return pd.concat(dfs, ignore_index=True)
+
+    # Si no hay parquet, intenta CSV (y csv.gz)
+    files = sorted(in_dir.glob("meteo_*.csv"))
+    if not files:
+        files = sorted(in_dir.glob("meteo_*.csv.gz"))
+
+    if files:
+        print(f"[INFO] Leyendo {len(files)} archivos RAW mensuales (csv)...")
+        dfs = [pd.read_csv(fp) for fp in files]
+        return pd.concat(dfs, ignore_index=True)
+
+    raise FileNotFoundError(
+        f"No encuentro {base_name}.parquet ni {base_name}.csv en {in_dir}, "
+        f"ni archivos mensuales meteo_*.parquet / meteo_*.csv."
+    )
 
 
 def _parse_date(s: str | None) -> pd.Timestamp | None:
@@ -106,11 +150,8 @@ def save_layer2_meteo(df: pd.DataFrame, out_dir: Path):
 
     # Agrupamos por año y mes para generar un archivo por cada uno
     for (y, m), g in df.groupby(["year", "month"], dropna=False):
-        # Creamos el nombre siguiendo el formato: meteo_2020-01.parquet
         file_name = f"meteo_{int(y)}-{int(m):02d}.parquet"
         dest_path = out_dir / file_name
-        
-        # Guardamos directamente en la carpeta out_dir sin subcarpetas
         g.to_parquet(dest_path, index=False, engine="pyarrow")
 
     print("\n[OK] Capa 2 METEO guardada como archivos individuales en:", out_dir)
@@ -123,7 +164,7 @@ def main():
     default_raw_name = meteo_cfg.get("out_name", "meteo_hourly_nyc")
 
     p = argparse.ArgumentParser(description="Capa 2 Meteo (sin Spark): tipado + higiene + particionado.")
-    p.add_argument("--name", dest="raw_name", default=default_raw_name, help="Nombre base del meteo raw")
+    p.add_argument("--name", dest="raw_name", default=default_raw_name, help="Nombre base del meteo raw (formato antiguo)")
     p.add_argument("--from", dest="date_from", default=None, help="YYYY-MM-DD (inclusive)")
     p.add_argument("--to", dest="date_to", default=None, help="YYYY-MM-DD (inclusive)")
     args = p.parse_args()
