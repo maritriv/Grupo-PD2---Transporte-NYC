@@ -22,7 +22,7 @@ minio:
 # Configuración de descarga
 descarga:
   # Años a descargar por defecto
-  start_year: 2020
+  start_year: 2023
   end_year: 2025
   
   # Meses a descargar por defecto (1-12)
@@ -60,7 +60,7 @@ eventos:
   dataset_id: "bkfu-528j"
   
   # Años a descargar por defecto
-  start_year: 2020
+  start_year: 2023
   end_year: 2025
   
   # Meses a descargar por defecto (1-12)
@@ -76,7 +76,7 @@ meteo:
   url_base: "https://archive-api.open-meteo.com/v1/archive"
 
   # Años a descargar por defecto
-  start_year: 2020
+  start_year: 2023
   end_year: 2025
   
   # Meses a descargar por defecto (1-12)
