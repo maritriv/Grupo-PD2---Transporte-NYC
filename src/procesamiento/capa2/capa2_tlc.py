@@ -1,3 +1,4 @@
+# src/procesamiento/capa2/capa2_tlc.py
 from __future__ import annotations
 
 import argparse
@@ -28,24 +29,29 @@ def _list_parquets(folder: Path) -> list[Path]:
     return sorted(folder.glob("*.parquet"))
 
 
-def iter_raw_tlc_files(
-    raw_base: Path,
-    services: Iterable[str] = ("yellow", "green", "fhvhv"),
+def iter_validated_tlc_files(
+    validated_base: Path,
+    services: Iterable[str] = ("yellow", "green", "fhv", "fhvhv"),
+    clean_subdir: str = "clean",
 ) -> Iterator[Tuple[str, Path]]:
-    raw_base = Path(raw_base).resolve()
-    if not raw_base.exists():
-        print(f"[WARN] No existe RAW base: {raw_base}")
+    """
+    Itera ficheros parquet validados (capa 1):
+        data/validated/<service>/clean/*.parquet
+    """
+    validated_base = Path(validated_base).resolve()
+    if not validated_base.exists():
+        print(f"[WARN] No existe validated base: {validated_base}")
         return
 
     for service in services:
-        folder = raw_base / service
+        folder = validated_base / service / clean_subdir
         files = _list_parquets(folder)
 
         if not files:
             print(f"[WARN] No hay parquets en {folder}. Se omite {service}.")
             continue
 
-        print(f"[INFO] {service}: {len(files)} parquets encontrados")
+        print(f"[INFO] {service}: {len(files)} parquets encontrados (validated/{clean_subdir})")
         for fp in files:
             yield service, fp
 
@@ -133,7 +139,6 @@ def build_layer2_tlc(df: pd.DataFrame) -> pd.DataFrame:
     df2["month"] = df2["pickup_datetime"].dt.month
     df2["hour"] = df2["pickup_datetime"].dt.hour
 
-    # Spark dayofweek: 1=Sunday ... 7=Saturday
     dow0 = df2["pickup_datetime"].dt.dayofweek  # 0=Mon..6=Sun
     df2["day_of_week"] = ((dow0 + 1) % 7) + 1
     df2["is_weekend"] = df2["day_of_week"].isin([1, 7]).astype("int")
@@ -148,7 +153,6 @@ def build_layer2_tlc(df: pd.DataFrame) -> pd.DataFrame:
     df2 = df2.dropna(subset=["pickup_datetime", "date", "year", "month", "hour"])
     df2 = df2[(df2["hour"] >= 0) & (df2["hour"] <= 23)]
 
-    # columnas finales
     cols = [
         "service_type",
         "pickup_datetime", "dropoff_datetime",
@@ -195,9 +199,19 @@ def write_partitioned(df: pd.DataFrame, out_dir: Path):
 
 
 def main():
-    p = argparse.ArgumentParser(description="Capa 2 TLC (Pandas, sin Spark): procesa fichero a fichero (sin reventar RAM).")
-    p.add_argument("--raw-dir", default=str(obtener_ruta("data/raw")), help="RAW base (contiene yellow/green/fhvhv)")
-    p.add_argument("--out-dir", default=str(obtener_ruta("data/external/tlc/standarized")), help="Salida capa 2 TLC (dataset particionado)")
+    p = argparse.ArgumentParser(
+        description="Capa 2 TLC (Pandas, sin Spark): lee Capa 1 validated/<service>/clean/*.parquet y escribe particionado."
+    )
+    p.add_argument(
+        "--raw-dir",
+        default=str(obtener_ruta("data/validated")),
+        help="Base validated (contiene <service>/clean/*.parquet). Ej: data/validated",
+    )
+    p.add_argument(
+        "--out-dir",
+        default=str(obtener_ruta("data/standarized")),
+        help="Salida capa 2 TLC (dataset particionado)",
+    )
     p.add_argument("--from", dest="date_from", default=None, help="YYYY-MM-DD (inclusive)")
     p.add_argument("--to", dest="date_to", default=None, help="YYYY-MM-DD (inclusive)")
     p.add_argument("--mode", choices=["append", "overwrite"], default="append", help="append o overwrite (borra salida)")
@@ -208,7 +222,7 @@ def main():
     if args.date_to:
         datetime.strptime(args.date_to, "%Y-%m-%d")
 
-    raw_base = Path(args.raw_dir)
+    validated_base = Path(args.raw_dir)
     out_dir = Path(args.out_dir)
 
     if args.mode == "overwrite" and out_dir.exists():
@@ -217,7 +231,7 @@ def main():
 
     any_written = False
 
-    for service, fp in iter_raw_tlc_files(raw_base):
+    for service, fp in iter_validated_tlc_files(validated_base):
         print(f"\n[INFO] Procesando {service} -> {fp.name}")
 
         df = pd.read_parquet(fp)
@@ -225,7 +239,6 @@ def main():
 
         df2 = build_layer2_tlc(df)
 
-        # filtro por rango opcional
         if not df2.empty and (args.date_from or args.date_to):
             dt = pd.to_datetime(df2["date"], errors="coerce")
             if args.date_from:
