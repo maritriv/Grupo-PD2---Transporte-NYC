@@ -40,7 +40,6 @@ from src.visualizaciones.viz_tlc.viz_common import get_spark, read_capa3, save_f
 
 
 def plot_num_trips(df_daily):
-    # df_daily: date, service_type, num_trips
     pdf = (
         ensure_local_date(df_daily, "date")
         .select("date", "service_type", "num_trips")
@@ -48,15 +47,27 @@ def plot_num_trips(df_daily):
         .toPandas()
     )
 
-    fig = plt.figure()
-    for svc, g in pdf.groupby("service_type"):
-        plt.plot(g["date"], g["num_trips"], label=svc)
+    services = sorted(pdf["service_type"].unique())
+    fig, axes = plt.subplots(len(services), 1, sharex=True, figsize=(10, 7))
 
-    plt.title("Número de viajes diario por servicio")
-    plt.xlabel("Fecha")
-    plt.ylabel("Viajes (num_trips)")
-    plt.legend()
+    if len(services) == 1:
+        axes = [axes]
+
+    for ax, svc in zip(axes, services):
+        g = pdf[pdf["service_type"] == svc]
+        ax.plot(g["date"], g["num_trips"])
+        ax.set_title(f"Viajes diarios - {svc}")
+        ax.set_ylabel("num_trips")
+    
+    for label in axes[-1].get_xticklabels():
+        label.set_rotation(30)
+        label.set_ha("right")
+
+    axes[-1].set_xlabel("Fecha")
+    fig.suptitle("Número de viajes diario por servicio", y=0.98)
+    fig.tight_layout()
     return fig
+
 
 
 def plot_avg_price(df_daily):

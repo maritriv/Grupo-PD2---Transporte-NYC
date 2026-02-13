@@ -30,28 +30,43 @@ NOTAS
 -----
 Para evitar un heatmap inmanejable, se limita a TOP 60 zonas por demanda media
 (la selección de zonas se calcula dentro del año elegido).
+
+En el heatmap de precio se utiliza un recorte por percentiles de la escala
+de color (p.ej. p95) para reducir el impacto de valores extremos y facilitar
+una visión global de los patrones horarios y espaciales.
 """
 
 from __future__ import annotations
 
 import argparse
 import matplotlib.pyplot as plt
+import numpy as np
 
 from pyspark.sql import functions as F
 from src.visualizaciones.viz_tlc.viz_common import get_spark, read_capa3, save_fig
 
 
-def make_heatmap_pivot(pdf, title: str, value_col: str):
-    # pdf columns: pu_location_id, hour, value_col
+def make_heatmap_pivot(pdf, title: str, value_col: str, clip_quantile: float | None = None):
     pivot = pdf.pivot_table(index="pu_location_id", columns="hour", values=value_col, aggfunc="mean")
 
+    data = pivot.values.astype(float)
+
+    if clip_quantile is not None:
+        vmin = np.nanpercentile(data, 100 * (1 - clip_quantile))
+        vmax = np.nanpercentile(data, 100 * clip_quantile)
+    else:
+        vmin, vmax = None, None
+
     fig = plt.figure()
-    plt.imshow(pivot.values, aspect="auto")
+    im = plt.imshow(data, aspect="auto", vmin=vmin, vmax=vmax)
+    cbar = plt.colorbar(im)
+    cbar.set_label(value_col)
     plt.title(title)
     plt.xlabel("Hora (0-23)")
     plt.ylabel("pu_location_id (ordenado)")
     plt.xticks(range(0, 24, 2), range(0, 24, 2))
     return fig
+
 
 
 def main(year: int):
@@ -91,10 +106,12 @@ def main(year: int):
     save_fig(fig1, f"outputs/viz_tlc/03_heatmap_demand_zone_hour_{year}.png")
 
     fig2 = make_heatmap_pivot(
-        pdf,
-        title=f"Hotspots: precio medio (avg_price) por zona y hora [TOP 60] | {year}",
-        value_col="avg_price",
-    )
+    pdf,
+    title=f"Hotspots: precio medio (avg_price) por zona y hora [TOP 60] | {year}",
+    value_col="avg_price",
+    clip_quantile=0.95,  
+)
+
     save_fig(fig2, f"outputs/viz_tlc/04_heatmap_price_zone_hour_{year}.png")
 
     spark.stop()

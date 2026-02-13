@@ -48,11 +48,14 @@ def main(year: int):
     spark = get_spark(f"FaseB-Viz-04-{year}")
     _, _, _, df3 = read_capa3(spark)
 
-    # ✅ Filtra por año SOLO si df3 tiene columna "date"
-    if "date" in df3.columns:
+    # Filtra por año SOLO si df3 tiene columna "date"
+    if "year" in df3.columns:
+        df3 = df3.where(F.col("year") == year)
+    elif "date" in df3.columns:
         df3 = df3.where(F.year("date") == year)
     else:
-        print("⚠️ df3 no tiene columna 'date' -> no se puede filtrar por año en este dataframe.")
+        print("⚠️ df3 no tiene 'year' ni 'date' -> no se puede filtrar por año.")
+
 
     # Scatter: volumen vs variabilidad (muestra top por volumen para que sea legible)
     top = (
@@ -64,12 +67,22 @@ def main(year: int):
 
     fig = plt.figure()
     for svc, g in top.groupby("service_type"):
-        plt.scatter(g["num_trips"], g["price_variability"], label=svc, alpha=0.5)
+        plt.scatter(
+            g["num_trips"],
+            g["price_variability"],
+            label=svc,
+            alpha=0.12,      # más transparente
+            s=18,            # puntos pequeños
+            linewidths=0,
+            rasterized=True, # mejora rendimiento y legibilidad
+        )
 
     plt.title(f"{year} | Tensión: volumen vs variabilidad (IQR) [top 1500 por volumen]")
     plt.xlabel("num_trips")
     plt.ylabel("price_variability (IQR)")
     plt.legend()
+    plt.xscale("log")
+    plt.xlabel("num_trips (log)")
     save_fig(fig, f"outputs/viz_tlc/07_{year}_scatter_volume_vs_variability.png")
 
     # Ranking negocio: top 15 (gráfico de barras)
