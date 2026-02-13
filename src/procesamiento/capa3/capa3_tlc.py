@@ -1,215 +1,381 @@
-# src/procesamiento/capa3/capa3.py
+# src/procesamiento/capa3/capa3_tlc.py
 from __future__ import annotations
-import findspark
-findspark.init()
 
+import argparse
+import math
+import shutil
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from pyspark.sql import SparkSession, functions as F
-from config.settings import obtener_ruta
+from datetime import datetime
+from typing import Dict, Iterable, Iterator, List, Optional, Tuple
 
-DEBUG = False  # True para ver previews
+import numpy as np
+import pandas as pd
 
-# ---------------------------------------------------------------------
-# Spark (igual que tu capa2)
-# ---------------------------------------------------------------------
-def get_spark(app_name: str = "PD2-Capa3"):
-    spark = (
-        SparkSession.builder
-        .appName(app_name)
-        .master("local[*]")
-        .config("spark.driver.memory", "6g")
-        .config("spark.executor.memory", "6g")
-        .config("spark.sql.shuffle.partitions", "200")
-        .getOrCreate()
-    )
-    spark.conf.set("spark.sql.session.timeZone", "America/New_York")
-    spark.sparkContext.setLogLevel("WARN")
-    return spark
+try:
+    from config.settings import obtener_ruta  # type: ignore
+except Exception:
+    def obtener_ruta(p: str) -> Path:
+        return Path(p)
+
+DEBUG = False
 
 
-# ---------------------------------------------------------------------
-# Lectura capa 2 + higiene mínima (clave)
-# ---------------------------------------------------------------------
-def read_layer2(
-    spark,
-    layer2_path: Path = obtener_ruta("data/standarized"),
-    min_date: str = "2019-01-01",
-    max_date: str = "2024-12-31",
-    cap_max_price: float = 500.0,   # cap simple anti-outliers
-):
-    df = spark.read.parquet(str(layer2_path))
-
-    # defensivo: quita registros rotos para agregación
-    df = df.filter(
-        F.col("date").isNotNull()
-        & F.col("hour").isNotNull()
-        & F.col("service_type").isNotNull()
-        & F.col("pu_location_id").isNotNull()
-        & F.col("total_amount_std").isNotNull()
-    )
-
-    # filtro de fechas razonables
-    df = df.filter(F.col("date").between(F.lit(min_date), F.lit(max_date)))
-
-    # higiene precio (evita refunds/0 y outliers)
-    df = df.filter((F.col("total_amount_std") > 0) & (F.col("total_amount_std") < F.lit(cap_max_price)))
-
-    return df
+# -----------------------------------------------------------------------------
+# Entrada: iterar parquets de capa 2 (sin asumir un único fichero)
+# -----------------------------------------------------------------------------
+def iter_parquet_files(base: Path) -> Iterator[Path]:
+    base = Path(base).resolve()
+    if not base.exists():
+        raise FileNotFoundError(f"No existe: {base}")
+    yield from (p for p in base.rglob("*.parquet") if p.is_file())
 
 
-# ---------------------------------------------------------------------
-# Construcción CAPA 3
-# ---------------------------------------------------------------------
-def build_layer3(
-    df_capa2,
-    min_trips_df2: int = 30,   # zona+hora+dia: mínimo para stats estables
-    min_trips_df3: int = 100,  # zona+hora+servicio: mínimo para variabilidad fiable
-):
-    # DF1: Evolución diaria por servicio (date + service_type)
-    df_daily_service = (
-        df_capa2
-        .groupBy("date", "service_type")
-        .agg(
-            F.count("*").alias("num_trips"),
-            F.avg("total_amount_std").alias("avg_price"),
-            F.stddev("total_amount_std").alias("std_price"),
-            F.countDistinct("pu_location_id").alias("unique_zones"),
+# -----------------------------------------------------------------------------
+# Agregación online (n, sum, sumsq) + sets para distinct + sampling para quantiles
+# -----------------------------------------------------------------------------
+@dataclass
+class RunningStats:
+    n: int = 0
+    s: float = 0.0
+    ss: float = 0.0
+
+    def add(self, x: np.ndarray) -> None:
+        if x.size == 0:
+            return
+        self.n += int(x.size)
+        self.s += float(x.sum())
+        self.ss += float((x * x).sum())
+
+    def mean(self) -> float:
+        return self.s / self.n if self.n > 0 else float("nan")
+
+    def std_sample(self) -> float:
+        if self.n <= 1:
+            return float("nan")
+        var = (self.ss - (self.s * self.s) / self.n) / (self.n - 1)
+        if var < 0:
+            var = 0.0
+        return float(math.sqrt(var))
+
+
+class Reservoir:
+    def __init__(self, k: int, seed: int = 42):
+        self.k = int(k)
+        self.rng = np.random.default_rng(seed)
+        self.samples: List[float] = []
+        self.seen: int = 0
+
+    def add_many(self, x: np.ndarray) -> None:
+        for v in x:
+            self.seen += 1
+            if len(self.samples) < self.k:
+                self.samples.append(float(v))
+            else:
+                j = self.rng.integers(1, self.seen + 1)
+                if j <= self.k:
+                    self.samples[int(j - 1)] = float(v)
+
+    def percentiles(self, ps: Tuple[float, float]) -> Tuple[float, float]:
+        if not self.samples:
+            return (float("nan"), float("nan"))
+        arr = np.asarray(self.samples, dtype=float)
+        return (float(np.percentile(arr, ps[0])), float(np.percentile(arr, ps[1])))
+
+
+def _safe_partition_value(v) -> str:
+    s = str(v)
+    s = s.replace("/", "-").replace("\\", "-").replace(":", "-").strip()
+    return s
+
+
+def write_partitioned_dataset(df: pd.DataFrame, out_dir: Path, partition_cols: Iterable[str]) -> None:
+    if df.empty:
+        return
+
+    out_dir = Path(out_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    part_cols = list(partition_cols)
+
+    # Para igualar Spark partitionBy(date), usamos YYYY-MM-DD en la carpeta
+    if "date" in part_cols and "date" in df.columns:
+        df = df.copy()
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+
+    for keys, g in df.groupby(part_cols, dropna=False):
+        if not isinstance(keys, tuple):
+            keys = (keys,)
+
+        part_dir = out_dir
+        for col, val in zip(part_cols, keys):
+            part_dir = part_dir / f"{col}={_safe_partition_value(val)}"
+        part_dir.mkdir(parents=True, exist_ok=True)
+
+        fname = f"part_{uuid.uuid4().hex}.parquet"
+        g.to_parquet(part_dir / fname, index=False, engine="pyarrow")
+
+
+# -----------------------------------------------------------------------------
+# Lectura + filtros equivalentes a Spark
+# -----------------------------------------------------------------------------
+def normalize_and_filter(
+    df: pd.DataFrame,
+    min_date: str,
+    max_date: str,
+    cap_max_price: float,
+) -> pd.DataFrame:
+    need_cols = ["date", "hour", "service_type", "pu_location_id", "total_amount_std"]
+    for c in need_cols:
+        if c not in df.columns:
+            raise ValueError(f"Falta columna requerida: {c}")
+
+    out = df[need_cols].copy()
+
+    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    out["hour"] = pd.to_numeric(out["hour"], errors="coerce").astype("Int64")
+    out["service_type"] = out["service_type"].astype(str)
+    out["pu_location_id"] = pd.to_numeric(out["pu_location_id"], errors="coerce").astype("Int64")
+    out["total_amount_std"] = pd.to_numeric(out["total_amount_std"], errors="coerce")
+
+    out = out.dropna(subset=["date", "hour", "service_type", "pu_location_id", "total_amount_std"])
+
+    dmin = pd.to_datetime(min_date)
+    dmax = pd.to_datetime(max_date)
+    out = out[(out["date"] >= dmin) & (out["date"] <= dmax)]
+
+    out = out[(out["hour"] >= 0) & (out["hour"] <= 23)]
+
+    out = out[(out["total_amount_std"] > 0) & (out["total_amount_std"] < float(cap_max_price))]
+
+    # Spark usa date (tipo date). Aquí lo dejamos como datetime (luego se formatea al guardar).
+    return out
+
+
+# -----------------------------------------------------------------------------
+# Construcción CAPA 3 (mismas 4 salidas)
+# -----------------------------------------------------------------------------
+def build_layer3_streaming(
+    layer2_path: Path,
+    min_date: str,
+    max_date: str,
+    cap_max_price: float,
+    min_trips_df2: int,
+    min_trips_df3: int,
+    reservoir_k: int = 2000,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    daily_stats: Dict[Tuple[pd.Timestamp, str], RunningStats] = {}
+    daily_zones: Dict[Tuple[pd.Timestamp, str], set] = {}
+
+    zhd_global: Dict[Tuple[int, int, pd.Timestamp], RunningStats] = {}
+    zhd_service: Dict[Tuple[int, int, pd.Timestamp, str], RunningStats] = {}
+
+    var_stats: Dict[Tuple[int, int, str], Tuple[RunningStats, Reservoir]] = {}
+
+    files = list(iter_parquet_files(layer2_path))
+    if not files:
+        raise FileNotFoundError(f"No hay parquets dentro de {layer2_path}")
+
+    print(f"[INFO] Leyendo {len(files)} parquets de Capa 2 (streaming)...")
+
+    for fp in files:
+        df_raw = pd.read_parquet(fp)
+        df = normalize_and_filter(df_raw, min_date=min_date, max_date=max_date, cap_max_price=cap_max_price)
+
+        if df.empty:
+            continue
+
+        # DF1: date + service_type
+        for (d, svc), g in df.groupby(["date", "service_type"]):
+            key = (d, svc)
+            st = daily_stats.get(key)
+            if st is None:
+                st = RunningStats()
+                daily_stats[key] = st
+                daily_zones[key] = set()
+            x = g["total_amount_std"].to_numpy(dtype=float, copy=False)
+            st.add(x)
+            daily_zones[key].update(g["pu_location_id"].astype(int).unique().tolist())
+
+        # DF2a: pu_location_id + hour + date
+        for (z, h, d), g in df.groupby(["pu_location_id", "hour", "date"]):
+            key = (int(z), int(h), d)
+            st = zhd_global.get(key)
+            if st is None:
+                st = RunningStats()
+                zhd_global[key] = st
+            st.add(g["total_amount_std"].to_numpy(dtype=float, copy=False))
+
+        # DF2b: pu_location_id + hour + date + service_type
+        for (z, h, d, svc), g in df.groupby(["pu_location_id", "hour", "date", "service_type"]):
+            key = (int(z), int(h), d, str(svc))
+            st = zhd_service.get(key)
+            if st is None:
+                st = RunningStats()
+                zhd_service[key] = st
+            st.add(g["total_amount_std"].to_numpy(dtype=float, copy=False))
+
+        # DF3: pu_location_id + hour + service_type (IQR approx como percentile_approx)
+        for (z, h, svc), g in df.groupby(["pu_location_id", "hour", "service_type"]):
+            key = (int(z), int(h), str(svc))
+            pair = var_stats.get(key)
+            if pair is None:
+                pair = (RunningStats(), Reservoir(k=reservoir_k, seed=42))
+                var_stats[key] = pair
+            st, res = pair
+            x = g["total_amount_std"].to_numpy(dtype=float, copy=False)
+            st.add(x)
+            res.add_many(x)
+
+    # ---- DF1: df_daily_service
+    rows1 = []
+    for (d, svc), st in daily_stats.items():
+        rows1.append(
+            {
+                "date": d,
+                "service_type": svc,
+                "num_trips": st.n,
+                "avg_price": st.mean(),
+                "std_price": st.std_sample(),
+                "unique_zones": len(daily_zones[(d, svc)]),
+            }
         )
-    )
+    df_daily_service = pd.DataFrame(rows1)
 
-    # DF2a: Hotspots globales (zona + hora + día)
-    df_zone_hour_day_global = (
-        df_capa2
-        .groupBy("pu_location_id", "hour", "date")
-        .agg(
-            F.count("*").alias("num_trips"),
-            F.avg("total_amount_std").alias("avg_price"),
-            F.stddev("total_amount_std").alias("std_price"),
+    # ---- DF2a: df_zone_hour_day_global
+    rows2a = []
+    for (z, h, d), st in zhd_global.items():
+        if st.n >= min_trips_df2:
+            rows2a.append(
+                {
+                    "pu_location_id": z,
+                    "hour": h,
+                    "date": d,
+                    "num_trips": st.n,
+                    "avg_price": st.mean(),
+                    "std_price": st.std_sample(),
+                }
+            )
+    df_zone_hour_day_global = pd.DataFrame(rows2a)
+
+    # ---- DF2b: df_zone_hour_day_service
+    rows2b = []
+    for (z, h, d, svc), st in zhd_service.items():
+        if st.n >= min_trips_df2:
+            rows2b.append(
+                {
+                    "pu_location_id": z,
+                    "hour": h,
+                    "date": d,
+                    "service_type": svc,
+                    "num_trips": st.n,
+                    "avg_price": st.mean(),
+                    "std_price": st.std_sample(),
+                }
+            )
+    df_zone_hour_day_service = pd.DataFrame(rows2b)
+
+    # ---- DF3: df_variability
+    rows3 = []
+    for (z, h, svc), (st, res) in var_stats.items():
+        if st.n < min_trips_df3:
+            continue
+        p75, p25 = res.percentiles((75, 25))
+        pv = p75 - p25
+        rows3.append(
+            {
+                "pu_location_id": z,
+                "hour": h,
+                "service_type": svc,
+                "num_trips": st.n,
+                "avg_price": st.mean(),
+                "price_variability": pv,
+                "biz_score": pv * math.log1p(st.n),
+            }
         )
-        .filter(F.col("num_trips") >= F.lit(min_trips_df2))
-    )
+    df_variability = pd.DataFrame(rows3)
 
-    # DF2b: Hotspots por servicio (zona + hora + día + servicio) clave para comparar taxi vs VTC
-    df_zone_hour_day_service = (
-        df_capa2
-        .groupBy("pu_location_id", "hour", "date", "service_type")
-        .agg(
-            F.count("*").alias("num_trips"),
-            F.avg("total_amount_std").alias("avg_price"),
-            F.stddev("total_amount_std").alias("std_price"),
-        )
-        .filter(F.col("num_trips") >= F.lit(min_trips_df2))
-    )
-
-    # DF3: Variabilidad robusta (IQR) (zona + hora + servicio)
-    df_variability = (
-        df_capa2
-        .groupBy("pu_location_id", "hour", "service_type")
-        .agg(
-            F.count("*").alias("num_trips"),
-            F.avg("total_amount_std").alias("avg_price"),
-            F.expr("percentile_approx(total_amount_std, 0.75)").alias("p75"),
-            F.expr("percentile_approx(total_amount_std, 0.25)").alias("p25"),
-        )
-        .withColumn("price_variability", F.col("p75") - F.col("p25"))
-        .filter(F.col("num_trips") >= F.lit(min_trips_df3))
-        .drop("p75", "p25")
-    )
-
-    # Heurística negocio (variabilidad alta + volumen)
-    # Nota: log1p evita que volumen enorme domine
-    df_variability = df_variability.withColumn(
-        "biz_score",
-        F.col("price_variability") * F.log1p(F.col("num_trips"))
-    )
+    # Tipos consistentes
+    for dfx in [df_daily_service, df_zone_hour_day_global, df_zone_hour_day_service, df_variability]:
+        if not dfx.empty and "hour" in dfx.columns:
+            dfx["hour"] = pd.to_numeric(dfx["hour"], errors="coerce").astype("Int64")
+        if not dfx.empty and "pu_location_id" in dfx.columns:
+            dfx["pu_location_id"] = pd.to_numeric(dfx["pu_location_id"], errors="coerce").astype("Int64")
+        if not dfx.empty and "num_trips" in dfx.columns:
+            dfx["num_trips"] = pd.to_numeric(dfx["num_trips"], errors="coerce").astype("Int64")
 
     return df_daily_service, df_zone_hour_day_global, df_zone_hour_day_service, df_variability
 
 
-# ---------------------------------------------------------------------
-# Guardado capa 3
-# ---------------------------------------------------------------------
-def save_layer3(
-    df_daily_service,
-    df_zone_hour_day_global,
-    df_zone_hour_day_service,
-    df_variability,
-    out_base: Path = obtener_ruta("data/aggregated"),
-):
-    (
-        df_daily_service
-        .write
-        .mode("overwrite")
-        .partitionBy("service_type")
-        .parquet(f"{out_base}/df_daily_service")
-    )
+# -----------------------------------------------------------------------------
+# Guardado CAPA 3 (misma estructura que Spark partitionBy)
+# -----------------------------------------------------------------------------
+def save_layer3_spark_style(
+    df_daily_service: pd.DataFrame,
+    df_zone_hour_day_global: pd.DataFrame,
+    df_zone_hour_day_service: pd.DataFrame,
+    df_variability: pd.DataFrame,
+    out_base: Path,
+    mode: str = "overwrite",
+) -> None:
+    out_base = Path(out_base).resolve()
+    out_base.mkdir(parents=True, exist_ok=True)
 
-    (
-        df_zone_hour_day_global
-        .write
-        .mode("overwrite")
-        .partitionBy("date")
-        .parquet(f"{out_base}/df_zone_hour_day_global")
-    )
+    if mode == "overwrite" and out_base.exists():
+        shutil.rmtree(out_base)
+        out_base.mkdir(parents=True, exist_ok=True)
 
-    (
-        df_zone_hour_day_service
-        .write
-        .mode("overwrite")
-        .partitionBy("date", "service_type")
-        .parquet(f"{out_base}/df_zone_hour_day_service")
-    )
-
-    (
-        df_variability
-        .write
-        .mode("overwrite")
-        .partitionBy("service_type")
-        .parquet(f"{out_base}/df_variability")
-    )
+    write_partitioned_dataset(df_daily_service, out_base / "df_daily_service", partition_cols=["service_type"])
+    write_partitioned_dataset(df_zone_hour_day_global, out_base / "df_zone_hour_day_global", partition_cols=["date"])
+    write_partitioned_dataset(df_zone_hour_day_service, out_base / "df_zone_hour_day_service", partition_cols=["date", "service_type"])
+    write_partitioned_dataset(df_variability, out_base / "df_variability", partition_cols=["service_type"])
 
     print("\nCapa 3 guardada en:", out_base)
-    print(" - df_daily_service           ->", f"{out_base}/df_daily_service")
-    print(" - df_zone_hour_day_global    ->", f"{out_base}/df_zone_hour_day_global")
-    print(" - df_zone_hour_day_service   ->", f"{out_base}/df_zone_hour_day_service")
-    print(" - df_variability (IQR+score) ->", f"{out_base}/df_variability")
+    print(" - df_daily_service           ->", out_base / "df_daily_service")
+    print(" - df_zone_hour_day_global    ->", out_base / "df_zone_hour_day_global")
+    print(" - df_zone_hour_day_service   ->", out_base / "df_zone_hour_day_service")
+    print(" - df_variability             ->", out_base / "df_variability")
 
 
-# ---------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 # Main
-# ---------------------------------------------------------------------
-def main():
-    spark = get_spark()
+# -----------------------------------------------------------------------------
+def main() -> None:
+    p = argparse.ArgumentParser(description="Capa 3 (sin Spark): agregación y guardado particionado estilo Spark.")
+    p.add_argument("--in-dir", default=str(obtener_ruta("data/standarized")), help="Ruta capa 2 (parquets)")
+    p.add_argument("--out-dir", default=str(obtener_ruta("data/aggregated")), help="Salida capa 3")
+    p.add_argument("--min-date", default="2019-01-01", help="YYYY-MM-DD (inclusive)")
+    p.add_argument("--max-date", default="2024-03-01", help="YYYY-MM-DD (inclusive)")
+    p.add_argument("--cap-max-price", type=float, default=500.0, help="Corte superior de precio (default: 500.0)")
+    p.add_argument("--min-trips-df2", type=int, default=30, help="Mínimo num_trips en DF2a/DF2b (default: 30)")
+    p.add_argument("--min-trips-df3", type=int, default=100, help="Mínimo num_trips en DF3 (default: 100)")
+    p.add_argument("--mode", choices=["overwrite", "append"], default="overwrite", help="overwrite borra salida")
+    args = p.parse_args()
 
-    df_capa2 = read_layer2(
-        spark,
-        layer2_path=obtener_ruta("data/standarized"),
-        min_date="2019-01-01",
-        max_date="2024-03-01",
-        cap_max_price=500.0,
-    )
+    datetime.strptime(args.min_date, "%Y-%m-%d")
+    datetime.strptime(args.max_date, "%Y-%m-%d")
 
-    df1, df2a, df2b, df3 = build_layer3(
-        df_capa2,
-        min_trips_df2=30,
-        min_trips_df3=100,
+    layer2_path = Path(args.in_dir)
+    out_base = Path(args.out_dir)
+
+    df1, df2a, df2b, df3 = build_layer3_streaming(
+        layer2_path=layer2_path,
+        min_date=args.min_date,
+        max_date=args.max_date,
+        cap_max_price=args.cap_max_price,
+        min_trips_df2=args.min_trips_df2,
+        min_trips_df3=args.min_trips_df3,
+        reservoir_k=2000,
     )
 
     if DEBUG:
-        print("\n--- DF1 daily_service sample ---")
-        df1.orderBy(F.desc("date")).show(10, truncate=False)
+        print(df1.head())
+        print(df2a.head())
+        print(df2b.head())
+        print(df3.head())
 
-        print("\n--- DF2a zone_hour_day_global sample ---")
-        df2a.orderBy(F.desc("date"), F.desc("num_trips")).show(10, truncate=False)
-
-        print("\n--- DF2b zone_hour_day_service sample ---")
-        df2b.orderBy(F.desc("date"), F.desc("num_trips")).show(10, truncate=False)
-
-        print("\n--- DF3 variability (IQR) sample ---")
-        df3.orderBy(F.desc("biz_score")).show(10, truncate=False)
-
-    save_layer3(df1, df2a, df2b, df3, out_base=obtener_ruta("data/aggregated"))
-    spark.stop()
+    save_layer3_spark_style(df1, df2a, df2b, df3, out_base=out_base, mode=args.mode)
 
 
 if __name__ == "__main__":
