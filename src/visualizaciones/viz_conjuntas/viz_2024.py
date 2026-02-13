@@ -47,6 +47,8 @@ REQUISITOS / RUTAS
 from __future__ import annotations
 
 import argparse
+from pathlib import Path  # <-- AÑADIDO: para crear carpeta de salida
+
 import numpy as np
 import matplotlib.pyplot as plt
 from pyspark.sql import functions as F
@@ -94,9 +96,9 @@ def read_meteo_c3(spark, year: int):
         .withColumn(
             "rain_bin",
             F.when(F.col("rain_mm") <= 0, F.lit("no_rain"))
-             .when(F.col("rain_mm") <= F.lit(RAIN_LIGHT_MAX), F.lit("light"))
-             .when(F.col("rain_mm") <= F.lit(RAIN_MODERATE_MAX), F.lit("moderate"))
-             .otherwise(F.lit("heavy"))
+            .when(F.col("rain_mm") <= F.lit(RAIN_LIGHT_MAX), F.lit("light"))
+            .when(F.col("rain_mm") <= F.lit(RAIN_MODERATE_MAX), F.lit("moderate"))
+            .otherwise(F.lit("heavy")),
         )
     )
     return m
@@ -246,6 +248,9 @@ def plot_demand_by_hour_events_binary(pdf, year: int, outpath: str):
 # MAIN
 # =========================
 def main(year: int, focus_zones: list[int]):
+    # crea carpeta de salida si no existe (y si existe, no falla)
+    Path("outputs/viz_conjuntas").mkdir(parents=True, exist_ok=True)
+
     spark = get_spark(f"Viz-Meteo-Eventos-{year}")
 
     # TLC capa3: usamos df2b (zona+hora+día+servicio)
@@ -273,9 +278,9 @@ def main(year: int, focus_zones: list[int]):
     # joins ligeros
     dfj = (
         base.join(F.broadcast(meteo), on=["date", "hour"], how="left")
-            .join(F.broadcast(events), on=["pu_borough", "date", "hour"], how="left")
-            .fillna({"event_flag": 0, "n_events": 0, "n_event_types": 0})
-            .cache()
+        .join(F.broadcast(events), on=["pu_borough", "date", "hour"], how="left")
+        .fillna({"event_flag": 0, "n_events": 0, "n_event_types": 0})
+        .cache()
     )
     dfj.count()  # materializa una vez
 
@@ -291,7 +296,7 @@ def main(year: int, focus_zones: list[int]):
     plot_demand_by_hour_rainflag(
         pdf_rain_demand,
         year,
-        outpath=f"outputs/viz_tlc/09_{year}_demand_by_hour_rainflag.png",
+        outpath=f"outputs/viz_conjuntas/09_{year}_demand_by_hour_rainflag.png",
     )
 
     # -------------------------
@@ -300,7 +305,7 @@ def main(year: int, focus_zones: list[int]):
     plot_pct_change_demand_rain(
         pdf_rain_demand,
         year,
-        outpath=f"outputs/viz_tlc/09b_{year}_pct_change_demand_rain.png",
+        outpath=f"outputs/viz_conjuntas/09b_{year}_pct_change_demand_rain.png",
     )
 
     # -------------------------
@@ -308,9 +313,9 @@ def main(year: int, focus_zones: list[int]):
     # -------------------------
     df_price = (
         dfj.where(F.col("pu_location_id").isin(focus_zones))
-           .groupBy("pu_location_id", "service_type", "hour", "rain_bin")
-           .agg(F.avg("avg_price").alias("avg_price2"))
-           .orderBy("pu_location_id", "service_type", "hour")
+        .groupBy("pu_location_id", "service_type", "hour", "rain_bin")
+        .agg(F.avg("avg_price").alias("avg_price2"))
+        .orderBy("pu_location_id", "service_type", "hour")
     )
     pdf_price = df_price.toPandas()
 
@@ -319,7 +324,7 @@ def main(year: int, focus_zones: list[int]):
             pdf_price,
             year,
             zone_id=z,
-            outpath=f"outputs/viz_tlc/10_{year}_price_by_hour_no_rain_vs_heavy_zone_{z}.png",
+            outpath=f"outputs/viz_conjuntas/10_{year}_price_by_hour_no_rain_vs_heavy_zone_{z}.png",
         )
 
     # -------------------------
@@ -334,7 +339,7 @@ def main(year: int, focus_zones: list[int]):
     plot_demand_by_hour_events_binary(
         pdf_ev_demand,
         year,
-        outpath=f"outputs/viz_tlc/11_{year}_demand_by_hour_events_binary.png",
+        outpath=f"outputs/viz_conjuntas/11_{year}_demand_by_hour_events_binary.png",
     )
 
     dfj.unpersist()
