@@ -43,7 +43,7 @@ def read_raw_events(in_dir: Path, base_name: str = "events_daily_borough_type") 
     if csv_path.exists():
         return pd.read_csv(csv_path)
 
-    # 2) Nuevo (mensual)
+    # 2) Mensual
     files = sorted(in_dir.glob("events_*.parquet"))
     if not files:
         files = sorted(in_dir.glob("events_*.parquet.gz"))
@@ -125,7 +125,7 @@ def build_layer2_events(df: pd.DataFrame) -> pd.DataFrame:
     df2["is_weekend"] = df2["day_of_week"].isin([1, 7]).astype("int")
     df2["week_of_year"] = dt.dt.isocalendar().week.astype("int")
 
-    # Orden columnas (schema canónico)
+    # Orden columnas
     cols = [
         "date",
         "hour",
@@ -151,7 +151,7 @@ def save_layer2_events(df: pd.DataFrame, out_dir: Path):
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Un parquet por mes (igual que meteo)
+    # Un parquet por mes
     for (y, m), g in df.groupby(["year", "month"], dropna=False):
         file_name = f"events_{int(y)}-{int(m):02d}.parquet"
         dest_path = out_dir / file_name

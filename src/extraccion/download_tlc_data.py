@@ -1,17 +1,24 @@
 # src/extraccion/download_tlc_data.py
 import itertools
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import click
 import requests
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, DownloadColumn, TransferSpeedColumn
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    BarColumn,
+    DownloadColumn,
+    TransferSpeedColumn,
+)
 
 from config.settings import obtener_ruta, config
 
 # Configuración base
-BASE_URL = config['descarga']['url_base']
+BASE_URL = config["descarga"]["url_base"]
 DEFAULT_DATA_DIR = obtener_ruta("data/raw")
 
 # Consola Rich
@@ -27,8 +34,10 @@ HTTP_ERRORS = {
     500: "Internal Server Error - Error del servidor",
     502: "Bad Gateway - Gateway no válido",
     503: "Service Unavailable - Servicio no disponible",
-    504: "Gateway Timeout - Timeout del gateway"
+    504: "Gateway Timeout - Timeout del gateway",
 }
+
+ALL_SERVICES = ("yellow", "green", "fhv", "fhvhv")
 
 
 def build_url(service: str, year: int, month: int) -> str:
@@ -44,26 +53,26 @@ def get_http_error_description(status_code: int) -> str:
 def download_file(url: str, dest_path: Path) -> bool:
     """
     Descarga un archivo desde una URL.
-    
+
     Returns:
         bool: True si se descargó correctamente, False en caso contrario.
     """
     if dest_path.exists():
         console.print(f"[dim]SKIP: Ya existe: {dest_path.name}[/dim]")
         return True
-    
+
     console.print(f"[cyan]Descargando:[/cyan] [dim]{url}[/dim]")
-    
+
     try:
         resp = requests.get(url, stream=True, timeout=30)
-        
+
         if resp.status_code == 200:
             # Crear directorio si no existe
             dest_path.parent.mkdir(parents=True, exist_ok=True)
-            
+
             # Obtener tamaño del archivo si está disponible
-            total_size = int(resp.headers.get('content-length', 0))
-            
+            total_size = int(resp.headers.get("content-length", 0))
+
             with open(dest_path, "wb") as f:
                 if total_size > 0:
                     # Con progress bar si conocemos el tamaño
@@ -74,7 +83,7 @@ def download_file(url: str, dest_path: Path) -> bool:
                         DownloadColumn(),
                         TransferSpeedColumn(),
                         console=console,
-                        transient=True  # Desaparece cuando termina
+                        transient=True,  # Desaparece cuando termina
                     ) as progress:
                         task = progress.add_task(f"[cyan]{dest_path.name}", total=total_size)
                         for chunk in resp.iter_content(chunk_size=8192):
@@ -86,19 +95,20 @@ def download_file(url: str, dest_path: Path) -> bool:
                     for chunk in resp.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
+
             return True
-        else:
-            error_desc = get_http_error_description(resp.status_code)
-            console.print(f"[red]ERROR {resp.status_code}:[/red] {error_desc}")
-            console.print(f"[dim]   URL: {url}[/dim]")
-            return False
-            
+
+        error_desc = get_http_error_description(resp.status_code)
+        console.print(f"[red]ERROR {resp.status_code}:[/red] {error_desc}")
+        console.print(f"[dim]   URL: {url}[/dim]")
+        return False
+
     except requests.exceptions.Timeout:
-        console.print(f"[red]TIMEOUT:[/red] La descarga tardó demasiado (>30s)")
+        console.print("[red]TIMEOUT:[/red] La descarga tardó demasiado (>30s)")
         console.print(f"[dim]   URL: {url}[/dim]")
         return False
     except requests.exceptions.ConnectionError:
-        console.print(f"[red]CONNECTION ERROR:[/red] No se pudo conectar al servidor")
+        console.print("[red]CONNECTION ERROR:[/red] No se pudo conectar al servidor")
         console.print(f"[dim]   URL: {url}[/dim]")
         return False
     except requests.exceptions.RequestException as e:
@@ -106,7 +116,7 @@ def download_file(url: str, dest_path: Path) -> bool:
         console.print(f"[dim]   URL: {url}[/dim]")
         return False
     except IOError as e:
-        console.print(f"[red]IO ERROR:[/red] No se pudo guardar el archivo")
+        console.print("[red]IO ERROR:[/red] No se pudo guardar el archivo")
         console.print(f"[dim]   Ruta: {dest_path}[/dim]")
         console.print(f"[dim]   Detalle: {str(e)}[/dim]")
         return False
@@ -120,42 +130,35 @@ def download_service_data(
     service: str,
     years: range,
     months: range,
-    data_dir: Optional[Path] = None
+    data_dir: Optional[Path] = None,
 ):
     """
     Descarga datos de un servicio específico para los años y meses indicados.
-    
-    Args:
-        service: Tipo de servicio ("yellow", "green", "fhv", "fhvhv")
-        years: Rango de años a descargar
-        months: Rango de meses a descargar
-        data_dir: Directorio base donde guardar los datos (por defecto data/raw)
     """
     if data_dir is None:
         data_dir = DEFAULT_DATA_DIR
-    
+
     # Crear subdirectorio para el servicio
     service_dir = data_dir / service
     service_dir.mkdir(parents=True, exist_ok=True)
-    
+
     total = len(list(itertools.product(years, months)))
     successful = 0
     skipped = 0
     failed = 0
-    
-    console.print(f"\n[bold]Descargando datos de '{service}' taxi[/bold]")
+
+    console.print(f"\n[bold]Descargando datos de '{service}'[/bold]")
     console.print(f"[yellow]Años:[/yellow] {min(years)}-{max(years)}, [yellow]Meses:[/yellow] {min(months)}-{max(months)}")
     console.print(f"[yellow]Destino:[/yellow] {service_dir}")
     console.rule(style="dim")
-    
+
     for idx, (year, month) in enumerate(itertools.product(years, months), 1):
         url = build_url(service, year, month)
         filename = f"{service}_tripdata_{year}-{month:02d}.parquet"
         dest_path = service_dir / filename
-        
+
         console.print(f"\n[bold cyan][{idx}/{total}][/bold cyan] ", end="")
-        
-        # Verificar si ya existe antes de intentar descargar
+
         if dest_path.exists():
             console.print(f"[dim]SKIP: Ya existe: {dest_path.name}[/dim]")
             skipped += 1
@@ -164,86 +167,73 @@ def download_service_data(
                 successful += 1
             else:
                 failed += 1
-    
+
     # Resumen final
     console.rule(style="dim")
-    console.print(f"Completado: {successful}/{total} archivos descargados correctamente")
-    
+    console.print(f"Completado: {successful}/{total} descargados | {skipped} omitidos | {failed} fallidos")
+
     if failed > 0:
         console.print(f"[yellow]ADVERTENCIA: {failed} archivo(s) no se pudieron descargar[/yellow]")
-    
-    return {
-        "total": total,
-        "successful": successful,
-        "failed": failed,
-        "skipped": skipped
-    }
+
+    return {"total": total, "successful": successful, "failed": failed, "skipped": skipped}
+
 
 @click.command()
 @click.option(
     "--service",
     "-s",
-    type=click.Choice(["yellow", "green", "fhv", "fhvhv"], case_sensitive=False),
-    required=True,
-    help="Tipo de servicio de taxi a descargar"
+    multiple=True,
+    type=click.Choice(list(ALL_SERVICES), case_sensitive=False),
+    help="Servicio(s) TLC a descargar. Si no se indica ninguno, se descargan todos.",
 )
-@click.option(
-    "--start-year",
-    type=int,
-    default=2023,
-    help="Año inicial (inclusive)"
-)
-@click.option(
-    "--end-year",
-    type=int,
-    default=2025,
-    help="Año final (inclusive)"
-)
-@click.option(
-    "--start-month",
-    type=click.IntRange(1, 12),
-    default=1,
-    help="Mes inicial (1-12)"
-)
-@click.option(
-    "--end-month",
-    type=click.IntRange(1, 12),
-    default=12,
-    help="Mes final (1-12)"
-)
+@click.option("--start-year", type=int, default=2023, help="Año inicial (inclusive)")
+@click.option("--end-year", type=int, default=2025, help="Año final (inclusive)")
+@click.option("--start-month", type=click.IntRange(1, 12), default=1, help="Mes inicial (1-12)")
+@click.option("--end-month", type=click.IntRange(1, 12), default=12, help="Mes final (1-12)")
 @click.option(
     "--data-dir",
     type=click.Path(path_type=Path),
     default=None,
-    help="Directorio base donde guardar los datos (por defecto: data/raw)"
+    help="Directorio base donde guardar los datos (por defecto: data/raw)",
 )
 def main(
-    service: str,
+    service: Sequence[str],
     start_year: int,
     end_year: int,
     start_month: int,
     end_month: int,
-    data_dir: Optional[Path]
+    data_dir: Optional[Path],
 ):
     """
     Descarga datos de NYC TLC (Taxi & Limousine Commission).
-    
-    Ejemplos de uso:
-    
-        uv run -m src.extraccion.download_tlc_data --service yellow
-        
-        uv run -m src.extraccion.download_tlc_data -s green --start-year 2024 --end-year 2024
-        
-        uv run -m src.extraccion.download_tlc_data -s fhvhv --start-year 2023 --end-year 2023 --start-month 6 --end-month 8
+    Si no se indica --service, descarga: yellow, green, fhv, fhvhv.
     """
     years = range(start_year, end_year + 1)
     months = range(start_month, end_month + 1)
-    
-    download_service_data(
-        service=service.lower(),
-        years=years,
-        months=months,
-        data_dir=data_dir
+
+    # Si no pasan servicios, descargamos todos
+    services = [s.lower() for s in service] if service else list(ALL_SERVICES)
+
+    console.print(f"[bold]Servicios seleccionados:[/bold] {', '.join(services)}")
+
+    global_stats = {"total": 0, "successful": 0, "failed": 0, "skipped": 0}
+
+    for s in services:
+        stats = download_service_data(
+            service=s,
+            years=years,
+            months=months,
+            data_dir=data_dir,
+        )
+        for k in global_stats:
+            global_stats[k] += stats[k]
+
+    console.print("\n[bold green]RESUMEN GLOBAL[/bold green]")
+    console.print(
+        f"Total: {global_stats['total']} | "
+        f"OK: {global_stats['successful']} | "
+        f"SKIP: {global_stats['skipped']} | "
+        f"FAILED: {global_stats['failed']}"
     )
 
 

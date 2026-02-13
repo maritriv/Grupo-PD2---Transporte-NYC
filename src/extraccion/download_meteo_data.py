@@ -311,7 +311,7 @@ def download_meteo_range(
 # CLI
 # =============================================================================
 @click.command()
-@click.option("--start-year", type=int, default=2020, show_default=True, help="Año inicial")
+@click.option("--start-year", type=int, default=2023, show_default=True, help="Año inicial")
 @click.option("--end-year", type=int, default=2025, show_default=True, help="Año final")
 @click.option("--start-month", type=click.IntRange(1, 12), default=1, help="Mes inicial (1-12)")
 @click.option("--end-month", type=click.IntRange(1, 12), default=12, help="Mes final (1-12)")

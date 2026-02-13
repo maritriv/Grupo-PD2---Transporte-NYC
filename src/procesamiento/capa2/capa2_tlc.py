@@ -1,412 +1,245 @@
-# src/procesamiento/capa2/capa2_tlc.py
-"""
-CAPA 2 (TLC NYC) — Limpieza + estandarización + features temporales/espaciales
------------------------------------------------------------------------------
-
-Qué hace este script (en lenguaje “para el profe”):
-1) Lee los parquets RAW de TLC (yellow, green, fhvhv) desde data/raw/<service>/*.parquet
-2) Evita el típico error de Spark al leer muchos parquets con esquemas distintos:
-   - Algunos meses/años cambian nombres de columnas (Airport_fee vs airport_fee)
-   - Algunas columnas aparecen con todo NULL (Spark infiere NullType/void) y luego revienta
-   - Solución robusta: leer fichero a fichero + castear explícitamente columnas problemáticas
-3) Normaliza timestamps a un nombre común:
-   - pickup_datetime / dropoff_datetime (coalesce entre nombres según servicio)
-4) Crea variables “inteligentes” para análisis:
-   - date, year, month, hour, day_of_week, is_weekend, week_of_year, trip_duration_min
-5) Estandariza una métrica de precio:
-   - total_amount_std = total_amount si existe
-   - si no, para fhvhv lo aproxima sumando base_passenger_fare + tips + tolls + airport_fee + congestion
-6) (Opcional pero recomendable) Enlaza zonas TLC para añadir borough/zone de pickup y dropoff:
-   - Requiere data/external/taxi_zone_lookup.csv
-7) Guarda CAPA 2 en data/standarized particionado por year, month, service_type
-
-Ejecución:
-    uv run -m src.procesamiento.capa2.capa2_tlc
-o bien:
-    python -m src.procesamiento.capa2.capa2_tlc
-
-Requisito para zonas:
-    wget -P data/external/ https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv
-"""
-
 from __future__ import annotations
 
+import argparse
+import shutil
+import uuid
+from datetime import datetime
 from pathlib import Path
-from pyspark.sql import SparkSession, functions as F
+from typing import Iterable, Iterator, Tuple
 
-# Si usas tu config.settings, mantenlo.
-# Si NO lo tienes, comenta esta importación y usa paths directos (Path("data/raw"), etc.)
-from config.settings import obtener_ruta  # type: ignore
+import pandas as pd
 
-DEBUG = False  # True -> imprime schemas y previews
+try:
+    from config.settings import obtener_ruta  # type: ignore
+except Exception:
+    def obtener_ruta(p: str) -> Path:
+        return Path(p)
 
-
-# =============================================================================
-# 1) Spark session
-# =============================================================================
-def get_spark(app_name: str = "PD2-Capa2-TLC") -> SparkSession:
-    """
-    Crea la sesión de Spark con una configuración razonable para local/WSL.
-
-    Nota:
-    - Aumentamos memoria porque TLC pesa.
-    - Ajustamos timezone a America/New_York para que los features temporales sean correctos.
-    """
-    spark = (
-        SparkSession.builder
-        .appName(app_name)
-        .master("local[*]")
-        .config("spark.driver.memory", "6g")
-        .config("spark.executor.memory", "6g")
-        .config("spark.sql.shuffle.partitions", "200")
-        .getOrCreate()
-    )
-    spark.conf.set("spark.sql.session.timeZone", "America/New_York")
-    spark.sparkContext.setLogLevel("WARN")
-    return spark
+DEBUG = False
 
 
-# =============================================================================
-# 2) Lectura RAW robusta (evita mismatches de tipos entre parquets)
-# =============================================================================
-# Columnas que suelen dar guerra por cambios entre años/meses o por venir todo NULL
-CANONICAL_CASTS = {
-    "airport_fee": "double",
-    "Airport_fee": "double",
-    "congestion_surcharge": "double",
-    "total_amount": "double",
-    "fare_amount": "double",
-    "tip_amount": "double",
-    "tips": "double",
-    "tolls_amount": "double",
-    "tolls": "double",
-    "trip_distance": "double",
-    "trip_miles": "double",
-    "PULocationID": "int",
-    "DOLocationID": "int",
-    "base_passenger_fare": "double",
-    "sales_tax": "double",
-    "bcf": "double",
-    "driver_pay": "double",
-}
-
-def normalize_problem_columns(df):
-    """
-    Normaliza columnas problemáticas para que el union de parquets NO reviente.
-
-    - Castea explícitamente columnas conocidas (evita NullType/void vs double).
-    - Unifica Airport_fee vs airport_fee (se queda con airport_fee).
-    """
-    # 1) Cast explícito si existe la columna
-    for col_name, spark_type in CANONICAL_CASTS.items():
-        if col_name in df.columns:
-            df = df.withColumn(col_name, F.col(col_name).cast(spark_type))
-
-    # 2) Unificación Airport_fee -> airport_fee
-    if "Airport_fee" in df.columns and "airport_fee" not in df.columns:
-        df = df.withColumnRenamed("Airport_fee", "airport_fee")
-
-    # Si por cualquier motivo están las dos, prioriza airport_fee
-    if "Airport_fee" in df.columns and "airport_fee" in df.columns:
-        df = df.drop("Airport_fee")
-
-    return df
+# -----------------------------------------------------------------------------
+# Listado de parquets (sin cargar a memoria)
+# -----------------------------------------------------------------------------
+def _list_parquets(folder: Path) -> list[Path]:
+    folder = Path(folder)
+    if not folder.exists():
+        return []
+    return sorted(folder.glob("*.parquet"))
 
 
-def read_raw_services(
-    spark: SparkSession,
-    base_path: Path = obtener_ruta("data/raw"),
-    services: tuple[str, ...] = ("yellow", "green", "fhvhv"),
-):
-    """
-    Lee RAW de cada servicio (yellow/green/fhvhv) de forma robusta:
-    - Lee fichero a fichero
-    - Normaliza tipos antes de hacer unionByName
-
-    Esto evita el error:
-    FAILED_READ_FILE.PARQUET_COLUMN_DATA_TYPE_MISMATCH
-    """
-    out = None
+def iter_raw_tlc_files(
+    raw_base: Path,
+    services: Iterable[str] = ("yellow", "green", "fhvhv"),
+) -> Iterator[Tuple[str, Path]]:
+    raw_base = Path(raw_base).resolve()
+    if not raw_base.exists():
+        print(f"[WARN] No existe RAW base: {raw_base}")
+        return
 
     for service in services:
-        folder = Path(base_path) / service
-        files = sorted(folder.glob("*.parquet"))
+        folder = raw_base / service
+        files = _list_parquets(folder)
 
         if not files:
-            print(f"[WARN] No hay parquet en {folder}. Se omite {service}.")
+            print(f"[WARN] No hay parquets en {folder}. Se omite {service}.")
             continue
 
-        for f in files:
-            df = spark.read.parquet(str(f)).withColumn("service_type", F.lit(service))
-            df = normalize_problem_columns(df)
+        print(f"[INFO] {service}: {len(files)} parquets encontrados")
+        for fp in files:
+            yield service, fp
 
-            if DEBUG:
-                print(f"\n--- {service.upper()} file={f.name} ---")
-                df.printSchema()
-                df.show(2, truncate=False)
 
-            out = df if out is None else out.unionByName(df, allowMissingColumns=True)
+# -----------------------------------------------------------------------------
+# Normalización columnas
+# -----------------------------------------------------------------------------
+def _coalesce_cols(df: pd.DataFrame, candidates: list[str]) -> pd.Series:
+    for c in candidates:
+        if c in df.columns:
+            return df[c]
+    return pd.Series([pd.NA] * len(df), index=df.index)
 
-    if out is None:
-        raise RuntimeError("No se encontró ningún parquet en data/raw/*")
+
+def build_layer2_tlc(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    df2 = df.copy()
+
+    # 1) pickup/dropoff unificados
+    df2["pickup_datetime"] = _coalesce_cols(
+        df2,
+        ["tpep_pickup_datetime", "lpep_pickup_datetime", "pickup_datetime"],
+    )
+    df2["dropoff_datetime"] = _coalesce_cols(
+        df2,
+        ["tpep_dropoff_datetime", "lpep_dropoff_datetime", "dropoff_datetime"],
+    )
+
+    df2["pickup_datetime"] = pd.to_datetime(df2["pickup_datetime"], errors="coerce")
+    df2["dropoff_datetime"] = pd.to_datetime(df2["dropoff_datetime"], errors="coerce")
+
+    # 2) location ids unificados
+    df2["pu_location_id"] = pd.to_numeric(_coalesce_cols(df2, ["PULocationID", "pu_location_id"]), errors="coerce")
+    df2["do_location_id"] = pd.to_numeric(_coalesce_cols(df2, ["DOLocationID", "do_location_id"]), errors="coerce")
+
+    # 3) numéricas típicas (si existen)
+    num_cols = [
+        "total_amount", "fare_amount",
+        "tip_amount", "tips",
+        "tolls_amount", "tolls",
+        "airport_fee", "Airport_fee",
+        "congestion_surcharge",
+        "base_passenger_fare",
+        "trip_distance", "trip_miles",
+    ]
+    for c in num_cols:
+        if c in df2.columns:
+            df2[c] = pd.to_numeric(df2[c], errors="coerce")
+
+    # Unificar Airport_fee -> airport_fee
+    if "airport_fee" not in df2.columns and "Airport_fee" in df2.columns:
+        df2["airport_fee"] = df2["Airport_fee"]
+    if "Airport_fee" in df2.columns:
+        df2 = df2.drop(columns=["Airport_fee"])
+
+    # 4) total_amount_std
+    zero = pd.Series(0.0, index=df2.index)
+
+    airport_fee_any = df2.get("airport_fee", zero).fillna(0)
+    tips_any = df2.get("tip_amount", zero).fillna(0)
+    if "tips" in df2.columns:
+        tips_any = tips_any + df2["tips"].fillna(0)
+
+    tolls_any = df2.get("tolls_amount", zero).fillna(0)
+    if "tolls" in df2.columns:
+        tolls_any = tolls_any + df2["tolls"].fillna(0)
+
+    congestion_any = df2.get("congestion_surcharge", zero).fillna(0)
+    base_fare = df2.get("base_passenger_fare", zero).fillna(0)
+
+    if "total_amount" in df2.columns:
+        df2["total_amount_std"] = df2["total_amount"].fillna(
+            base_fare + tips_any + tolls_any + airport_fee_any + congestion_any
+        )
+    else:
+        df2["total_amount_std"] = base_fare + tips_any + tolls_any + airport_fee_any + congestion_any
+
+    df2["total_amount_std"] = pd.to_numeric(df2["total_amount_std"], errors="coerce")
+
+    # 5) features temporales
+    df2["date"] = df2["pickup_datetime"].dt.date
+    df2["year"] = df2["pickup_datetime"].dt.year
+    df2["month"] = df2["pickup_datetime"].dt.month
+    df2["hour"] = df2["pickup_datetime"].dt.hour
+
+    # Spark dayofweek: 1=Sunday ... 7=Saturday
+    dow0 = df2["pickup_datetime"].dt.dayofweek  # 0=Mon..6=Sun
+    df2["day_of_week"] = ((dow0 + 1) % 7) + 1
+    df2["is_weekend"] = df2["day_of_week"].isin([1, 7]).astype("int")
+    df2["week_of_year"] = df2["pickup_datetime"].dt.isocalendar().week.astype("Int64")
+
+    # 6) duración
+    dur = (df2["dropoff_datetime"] - df2["pickup_datetime"]).dt.total_seconds() / 60.0
+    df2["trip_duration_min"] = dur
+    df2.loc[(df2["trip_duration_min"] < 0) | (df2["trip_duration_min"] > 360), "trip_duration_min"] = pd.NA
+
+    # 7) higiene mínima
+    df2 = df2.dropna(subset=["pickup_datetime", "date", "year", "month", "hour"])
+    df2 = df2[(df2["hour"] >= 0) & (df2["hour"] <= 23)]
+
+    # columnas finales
+    cols = [
+        "service_type",
+        "pickup_datetime", "dropoff_datetime",
+        "date", "year", "month", "hour", "day_of_week", "is_weekend", "week_of_year",
+        "trip_duration_min",
+        "pu_location_id", "do_location_id",
+        "total_amount_std",
+        "total_amount", "fare_amount",
+        "tip_amount", "tips",
+        "tolls_amount", "tolls",
+        "congestion_surcharge", "airport_fee",
+        "base_passenger_fare",
+        "trip_distance", "trip_miles",
+        "VendorID", "passenger_count", "RatecodeID", "payment_type",
+    ]
+    cols = [c for c in cols if c in df2.columns]
+    df2 = df2[cols]
 
     if DEBUG:
-        print("\n--- RAW UNION (conteo por servicio) ---")
-        out.groupBy("service_type").count().show()
-
-    return out
-
-
-# =============================================================================
-# 3) Construcción CAPA 2: timestamps, features temporales, precio estándar
-# =============================================================================
-def build_layer2(df):
-    """
-    Capa 2 = Capa RAW + columnas “inteligentes” pero SIN perder granularidad (1 fila = 1 viaje).
-
-    Aquí:
-    - Normalizamos timestamps (cada servicio usa nombres distintos)
-    - Generamos features temporales (date, hour, etc.)
-    - Creamos total_amount_std (comparabilidad básica entre servicios)
-    """
-    # --- timestamps unificados ---
-    pickup_dt = F.coalesce(
-        F.col("tpep_pickup_datetime"),
-        F.col("lpep_pickup_datetime"),
-        F.col("pickup_datetime"),
-    )
-
-    dropoff_dt = F.coalesce(
-        F.col("tpep_dropoff_datetime"),
-        F.col("lpep_dropoff_datetime"),
-        F.col("dropoff_datetime"),
-    )
-
-    df2 = (
-        df.withColumn("pickup_datetime", pickup_dt.cast("timestamp"))
-          .withColumn("dropoff_datetime", dropoff_dt.cast("timestamp"))
-          .withColumn("pu_location_id", F.col("PULocationID").cast("int"))
-          .withColumn("do_location_id", F.col("DOLocationID").cast("int"))
-    )
-
-    # --- precio estandarizado ---
-    # Para taxi (yellow/green) normalmente existe total_amount.
-    # Para fhvhv a veces no existe total_amount, pero sí base_passenger_fare + varios extras.
-    airport_fee_any = F.coalesce(F.col("airport_fee"), F.lit(0.0))
-    tips_any = F.coalesce(F.col("tip_amount"), F.col("tips"), F.lit(0.0))
-    tolls_any = F.coalesce(F.col("tolls_amount"), F.col("tolls"), F.lit(0.0))
-    congestion_any = F.coalesce(F.col("congestion_surcharge"), F.lit(0.0))
-
-    total_amount_std = F.coalesce(
-        F.col("total_amount"),
-        F.coalesce(F.col("base_passenger_fare"), F.lit(0.0))
-        + tips_any
-        + tolls_any
-        + airport_fee_any
-        + congestion_any
-    )
-
-    df2 = df2.withColumn("total_amount_std", total_amount_std.cast("double"))
-
-    # --- features temporales + duración ---
-    df2 = (
-        df2.withColumn("date", F.to_date("pickup_datetime"))
-           .withColumn("year", F.year("pickup_datetime"))
-           .withColumn("month", F.month("pickup_datetime"))
-           .withColumn("hour", F.hour("pickup_datetime"))
-           .withColumn("day_of_week", F.dayofweek("pickup_datetime"))  # 1=Dom ... 7=Sáb
-           .withColumn("is_weekend", F.col("day_of_week").isin([1, 7]).cast("int"))
-           .withColumn("week_of_year", F.weekofyear("pickup_datetime"))
-           .withColumn(
-               "trip_duration_min",
-               F.when(
-                   F.col("pickup_datetime").isNotNull() & F.col("dropoff_datetime").isNotNull(),
-                   (F.unix_timestamp("dropoff_datetime") - F.unix_timestamp("pickup_datetime")) / 60.0,
-               )
-           )
-           # Higiene básica duración: quita negativos o viajes absurdamente largos
-           .withColumn(
-               "trip_duration_min",
-               F.when(
-                   (F.col("trip_duration_min") < 0) | (F.col("trip_duration_min") > 360),
-                   None,
-               ).otherwise(F.col("trip_duration_min"))
-           )
-    )
-
-    if DEBUG:
-        print("\n--- CAPA 2 preview ---")
-        df2.select(
-            "service_type", "pickup_datetime", "date", "hour",
-            "pu_location_id", "do_location_id",
-            "total_amount_std", "trip_duration_min"
-        ).show(10, truncate=False)
+        print(df2.head())
 
     return df2
 
 
-# =============================================================================
-# 4) Lookup de zonas TLC (borough + zone)
-# =============================================================================
-def add_zone_lookup(
-    spark: SparkSession,
-    df,
-    zone_csv_path: Path = obtener_ruta("data/external") / "taxi_zone_lookup.csv",
-):
+# -----------------------------------------------------------------------------
+# Escritura particionada (sin juntar todo)
+# -----------------------------------------------------------------------------
+def write_partitioned(df: pd.DataFrame, out_dir: Path):
     """
-    Añade borough/zone para pickup y dropoff usando taxi_zone_lookup.csv.
-
-    - Es un join pequeño, por eso lo hacemos con broadcast (más rápido).
-    - Si el CSV no existe, el script NO revienta: solo devuelve df sin zonas.
+    Escribe df en:
+      out_dir/service_type=.../year=.../month=.../part_<uuid>.parquet
     """
-    try:
-        zones = (
-            spark.read.option("header", True).csv(str(zone_csv_path))
-            .select(
-                F.col("LocationID").cast("int").alias("location_id"),
-                F.col("Borough").alias("borough"),
-                F.col("Zone").alias("zone"),
-            )
-        )
+    if df.empty:
+        return
 
-        # Pickup
-        df = (
-            df.join(F.broadcast(zones), df.pu_location_id == zones.location_id, "left")
-              .drop("location_id")
-              .withColumnRenamed("borough", "pu_borough")
-              .withColumnRenamed("zone", "pu_zone")
-        )
+    out_dir = Path(out_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-        # Dropoff
-        df = (
-            df.join(F.broadcast(zones), df.do_location_id == zones.location_id, "left")
-              .drop("location_id")
-              .withColumnRenamed("borough", "do_borough")
-              .withColumnRenamed("zone", "do_zone")
-        )
-
-        if DEBUG:
-            print("\n--- CAPA 2 + zonas preview ---")
-            df.select(
-                "service_type", "date", "hour", "pu_borough", "pu_zone", "do_borough", "do_zone"
-            ).show(10, truncate=False)
-
-        return df
-
-    except Exception as e:
-        print("\n[INFO] No se pudo aplicar taxi_zone_lookup (no es fatal).")
-        print("Motivo:", str(e))
-        return df
+    for (svc, y, m), g in df.groupby(["service_type", "year", "month"], dropna=False):
+        part_dir = out_dir / f"service_type={svc}" / f"year={int(y)}" / f"month={int(m)}"
+        part_dir.mkdir(parents=True, exist_ok=True)
+        fname = f"part_{uuid.uuid4().hex}.parquet"
+        g.to_parquet(part_dir / fname, index=False, engine="pyarrow")
 
 
-# =============================================================================
-# 5) Selección de columnas finales (schema “canónico” + opcionales si existen)
-# =============================================================================
-def select_layer2_columns(df):
-    """
-    Selecciona un conjunto de columnas final:
-    - columnas canónicas que usaremos sí o sí
-    - columnas opcionales que pueden existir dependiendo del servicio/año
-    """
-    cols = [
-        "service_type",
-
-        "pickup_datetime",
-        "dropoff_datetime",
-        "date",
-        "year",
-        "month",
-        "hour",
-        "day_of_week",
-        "is_weekend",
-        "week_of_year",
-        "trip_duration_min",
-
-        "pu_location_id",
-        "do_location_id",
-        "pu_borough",
-        "pu_zone",
-        "do_borough",
-        "do_zone",
-
-        "total_amount_std",
-
-        # (opcionales)
-        "total_amount",
-        "fare_amount",
-        "tip_amount",
-        "tips",
-        "tolls_amount",
-        "tolls",
-        "congestion_surcharge",
-        "airport_fee",
-        "base_passenger_fare",
-        "trip_distance",
-        "trip_miles",
-
-        "VendorID",
-        "passenger_count",
-        "RatecodeID",
-        "payment_type",
-    ]
-
-    existing = set(df.columns)
-    keep = [c for c in cols if c in existing]
-
-    if DEBUG:
-        missing = [c for c in cols if c not in existing]
-        if missing:
-            print("\n[DEBUG] Columnas no presentes (esperable según servicio/año):")
-            print(missing)
-        print(f"\n[DEBUG] Guardando {len(keep)} columnas de {len(df.columns)} totales.")
-
-    return df.select(*keep)
-
-
-# =============================================================================
-# 6) Guardado CAPA 2
-# =============================================================================
-def save_layer2(df, out_path: Path = obtener_ruta("data/standarized")):
-    """
-    Guarda CAPA 2 particionada.
-
-    Importante:
-    - PartitionBy(year, month, service_type) crea carpetas tipo:
-        year=2023/month=4/service_type=yellow/part-...
-    - Si ves años raros (ej: 2028), normalmente es porque hay timestamps corruptos.
-      Se soluciona filtrando por rangos de fecha ANTES de escribir (si lo necesitas).
-    """
-    (
-        df.write
-          .mode("overwrite")
-          .partitionBy("year", "month", "service_type")
-          .parquet(str(out_path))
-    )
-    print("\nCapa 2 guardada en:", str(out_path))
-
-
-# =============================================================================
-# 7) Main
-# =============================================================================
 def main():
-    spark = get_spark()
+    p = argparse.ArgumentParser(description="Capa 2 TLC (Pandas, sin Spark): procesa fichero a fichero (sin reventar RAM).")
+    p.add_argument("--raw-dir", default=str(obtener_ruta("data/raw")), help="RAW base (contiene yellow/green/fhvhv)")
+    p.add_argument("--out-dir", default=str(obtener_ruta("data/external/tlc/standarized")), help="Salida capa 2 TLC (dataset particionado)")
+    p.add_argument("--from", dest="date_from", default=None, help="YYYY-MM-DD (inclusive)")
+    p.add_argument("--to", dest="date_to", default=None, help="YYYY-MM-DD (inclusive)")
+    p.add_argument("--mode", choices=["append", "overwrite"], default="append", help="append o overwrite (borra salida)")
+    args = p.parse_args()
 
-    # 1) RAW robusto (lee fichero a fichero, castea y une)
-    raw = read_raw_services(spark, base_path=obtener_ruta("data/raw"))
+    if args.date_from:
+        datetime.strptime(args.date_from, "%Y-%m-%d")
+    if args.date_to:
+        datetime.strptime(args.date_to, "%Y-%m-%d")
 
-    # 2) Construye capa 2 (features + precio estándar)
-    layer2 = build_layer2(raw)
+    raw_base = Path(args.raw_dir)
+    out_dir = Path(args.out_dir)
 
-    # 3) Añade zonas si existe taxi_zone_lookup.csv
-    layer2 = add_zone_lookup(spark, layer2)
+    if args.mode == "overwrite" and out_dir.exists():
+        print(f"[INFO] Borrando salida (overwrite): {out_dir}")
+        shutil.rmtree(out_dir)
 
-    # 4) Selecciona columnas finales
-    layer2 = select_layer2_columns(layer2)
+    any_written = False
 
-    # 5) Guardado
-    save_layer2(layer2, out_path=obtener_ruta("data/standarized"))
+    for service, fp in iter_raw_tlc_files(raw_base):
+        print(f"\n[INFO] Procesando {service} -> {fp.name}")
 
-    spark.stop()
+        df = pd.read_parquet(fp)
+        df["service_type"] = service
+
+        df2 = build_layer2_tlc(df)
+
+        # filtro por rango opcional
+        if not df2.empty and (args.date_from or args.date_to):
+            dt = pd.to_datetime(df2["date"], errors="coerce")
+            if args.date_from:
+                df2 = df2[dt >= pd.to_datetime(args.date_from)]
+            if args.date_to:
+                df2 = df2[dt <= pd.to_datetime(args.date_to)]
+
+        write_partitioned(df2, out_dir)
+        any_written = any_written or (not df2.empty)
+
+    if not any_written:
+        print("[WARN] No se escribió nada (no había datos o todo quedó filtrado).")
+    else:
+        print("\n[OK] Capa 2 TLC guardada en:", out_dir)
 
 
 if __name__ == "__main__":

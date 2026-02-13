@@ -295,8 +295,8 @@ def download_events_range(
 # =============================================================================
 @click.command()
 @click.option("--dataset", default=DEFAULT_DATASET, show_default=True)
-@click.option("--start-year", type=int, required=True)
-@click.option("--end-year", type=int, required=True)
+@click.option("--start-year", type=int, default=2023, show_default=True, help="Año inicial")
+@click.option("--end-year", type=int, default=2025, show_default=True, help="Año final")
 @click.option("--start-month", type=click.IntRange(1, 12), default=1)
 @click.option("--end-month", type=click.IntRange(1, 12), default=12)
 def main(dataset: str, start_year: int, end_year: int, start_month: int, end_month: int):
