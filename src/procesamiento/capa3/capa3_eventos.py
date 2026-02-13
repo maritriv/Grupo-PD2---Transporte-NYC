@@ -36,7 +36,7 @@ def read_layer2_events(layer2_path: Path, base_name: str = "events_daily_borough
     if not layer2_path.exists():
         raise FileNotFoundError(f"No existe {layer2_path}")
 
-    # 1) Mensual
+    # 1) Mensual (parquet)
     files = sorted(layer2_path.glob("events_*.parquet"))
     if not files:
         files = sorted(layer2_path.glob("events_*.parquet.gz"))
@@ -255,7 +255,7 @@ def save_layer3_events_spark_style(
         partition_cols=["borough"],
     )
 
-    print("\n[OK] Capa 3 EVENTOS guardada en:", out_base)
+    print("\n[OK] Capa 3 EVENTOS guardada (Spark-style partitioned) en:", out_base)
     print(" - df_borough_hour_day     ->", out_base / "df_borough_hour_day")
     print(" - df_daily_borough        ->", out_base / "df_daily_borough")
     print(" - df_type_daily_borough   ->", out_base / "df_type_daily_borough")
@@ -266,7 +266,7 @@ def save_layer3_events_spark_style(
 # Main
 # -----------------------------------------------------------------------------
 def main():
-    p = argparse.ArgumentParser(description="Capa 3 Eventos: agregados + salida idéntica a Spark partitionBy.")
+    p = argparse.ArgumentParser(description="Capa 3 Eventos (sin Spark): agregados + salida idéntica a Spark partitionBy.")
     p.add_argument("--from", dest="date_from", default=None, help="YYYY-MM-DD (inclusive)")
     p.add_argument("--to", dest="date_to", default=None, help="YYYY-MM-DD (inclusive)")
     p.add_argument("--min-events", type=int, default=1, help="Mínimo n_events en borough-date-hour (default: 1)")
@@ -283,7 +283,7 @@ def main():
     # Capa 2
     layer2_path = (project_root / "data" / "external" / "events" / "standarized").resolve()
 
-    # Path de guardado
+    # Path
     out_base = (project_root / "data" / "aggregated" / "events").resolve()
 
     print("[DEBUG] layer2_path:", layer2_path)
