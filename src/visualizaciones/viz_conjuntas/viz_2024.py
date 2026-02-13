@@ -40,7 +40,7 @@ REQUISITOS / RUTAS
 ------------------
 - TLC capa3 disponible (read_capa3)
 - Meteo capa3: data/external/meteo/aggregated/df_hour_day/data.parquet
-- Eventos capa3: data/aggregated/events/df_borough_hour_day
+- Eventos capa3: data/external/events/aggregated/df_borough_hour_day
 - Lookup zonas: data/external/taxi_zone_lookup.csv
 """
 
@@ -58,7 +58,7 @@ from src.visualizaciones.viz_tlc.viz_common import get_spark, read_capa3, save_f
 # CONFIG
 # =========================
 METEO_C3_PATH = "data/external/meteo/aggregated/df_hour_day/data.parquet"
-EVENTS_C3_PATH = "data/aggregated/events/df_borough_hour_day"
+EVENTS_C3_PATH = "data/external/events/aggregated/df_borough_hour_day.parquet"
 ZONES_LOOKUP_CSV = "data/external/taxi_zone_lookup.csv"
 
 # Zonas foco (elige 2: una “sensible” y otra “menos sensible”)
@@ -291,7 +291,7 @@ def main(year: int, focus_zones: list[int]):
     plot_demand_by_hour_rainflag(
         pdf_rain_demand,
         year,
-        outpath=f"outputs/viz_tlc/09_{year}_demand_by_hour_rainflag.png",
+        outpath=f"outputs/viz_conjuntas/09_{year}_demand_by_hour_rainflag.png",
     )
 
     # -------------------------
@@ -300,7 +300,7 @@ def main(year: int, focus_zones: list[int]):
     plot_pct_change_demand_rain(
         pdf_rain_demand,
         year,
-        outpath=f"outputs/viz_tlc/09b_{year}_pct_change_demand_rain.png",
+        outpath=f"outputs/viz_conjuntas/09b_{year}_pct_change_demand_rain.png",
     )
 
     # -------------------------
@@ -319,7 +319,7 @@ def main(year: int, focus_zones: list[int]):
             pdf_price,
             year,
             zone_id=z,
-            outpath=f"outputs/viz_tlc/10_{year}_price_by_hour_no_rain_vs_heavy_zone_{z}.png",
+            outpath=f"outputs/viz_conjuntas/10_{year}_price_by_hour_no_rain_vs_heavy_zone_{z}.png",
         )
 
     # -------------------------
@@ -334,7 +334,7 @@ def main(year: int, focus_zones: list[int]):
     plot_demand_by_hour_events_binary(
         pdf_ev_demand,
         year,
-        outpath=f"outputs/viz_tlc/11_{year}_demand_by_hour_events_binary.png",
+        outpath=f"outputs/viz_conjuntas/11_{year}_demand_by_hour_events_binary.png",
     )
 
     dfj.unpersist()
