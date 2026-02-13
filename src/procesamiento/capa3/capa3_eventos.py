@@ -34,7 +34,7 @@ def get_spark(app_name: str = "PD2-Capa3-Eventos"):
 # ---------------------------------------------------------------------
 def read_layer2_events(
     spark,
-    layer2_path: Path = obtener_ruta("data/standarized") / "events",
+    layer2_path = obtener_ruta("data/external/events") / "standarized",
     min_date: str = "2019-01-01",
     max_date: str = "2025-12-31",
 ):
@@ -113,7 +113,7 @@ def save_layer3_events(
     df_daily_borough,
     df_type_daily_borough,
     df_hourly_pattern,
-    out_base: Path = obtener_ruta("data/aggregated") / "events",
+    out_base: Path = obtener_ruta("data/external/events") / "aggregated",
 ):
     (
         df_borough_hour_day
@@ -162,7 +162,7 @@ def main():
 
     df2 = read_layer2_events(
         spark,
-        layer2_path=obtener_ruta("data/standarized") / "events",
+        layer2_path = obtener_ruta("data/external/events") / "standarized",
         min_date="2019-01-01",
         max_date="2025-12-31",
     )
@@ -176,7 +176,7 @@ def main():
         print("\n--- df_daily_borough sample ---")
         df2b.orderBy(F.desc("date"), F.desc("n_events")).show(20, truncate=False)
 
-    save_layer3_events(df1, df2b, df3, df4, out_base=obtener_ruta("data/aggregated") / "events")
+    save_layer3_events(df1, df2b, df3, df4, out_base=obtener_ruta("data/external/events") / "aggregated")
     spark.stop()
 
 
