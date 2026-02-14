@@ -112,13 +112,7 @@ cd Grupo-PD2---Transporte-NYC
 
 ----
 
-**2.**  Descargar los datos  
-Descargar desde el Drive del proyecto. Mover la carpeta datos al repositorio raíz.
-[Enlace a los datos (Drive)](https://drive.google.com/drive/u/2/folders/1gWM-5GU0OTZgczfwt1Mxz7wQFQUuLo5Z)   
-
-----
-
-**3.** Descarga las librerías necesarias creando automáticamente un entorno virtual con `uv sync` (desde la ubicación del `pyproject.toml`):
+**2.** Descarga las librerías necesarias creando automáticamente un entorno virtual con `uv sync` (desde la ubicación del `pyproject.toml`):
 Instala uv (si no lo tienes instalado):
    ```
    pip install uv
@@ -127,6 +121,41 @@ Instala uv (si no lo tienes instalado):
 ```
 uv sync
 ```
+----
+
+**3. Descargar los datos**
+
+Los datos del proyecto se almacenan en **MinIO** (object storage).
+
+Para descargarlos y mantener la estructura de directorios original, ejecuta:
+
+```bash
+uv run -m src.extraccion.download_from_minio
+```
+
+Por defecto:
+
+- Descarga todo el contenido bajo data/
+
+- Mantiene la misma estructura de carpetas
+
+- Omite archivos que ya existen localmente
+
+Opciones útiles:
+
+```bash
+# Descargar solo una subcarpeta
+uv run -m src.extraccion.download_from_minio --prefix data/raw/
+
+# Descargar en un directorio específico
+uv run -m src.extraccion.download_from_minio --dest-dir /ruta/destino
+
+# Forzar descarga (sobrescribir existentes)
+uv run -m src.extraccion.download_from_minio --no-skip
+```
+
+> Es necesario que el archivo `credentials.json` esté configurado en la raíz del proyecto antes de ejecutar la descarga.
+
 ----
 
 ## Equipo de desarrollo
