@@ -50,9 +50,10 @@ Detalles completos de cada subdirectorio y archivo:
     - Directorio __`extraccion/`__: Código responsable de la extracción de datos desde diversas fuentes.
       
             -   Archivo `download_event_data.py`: Descarga eventos desde NYC Open Data (Socrata), los agrega por date+hour+borough+event_type, y guarda un Parquet por mes.
+            -   Archivo `download_from_minio.py`: Descarga todos los datos subidos a MinIO
             -   Archivo `download_meteo_data.py`: Descarga datos meteorológicos horarios de NYC desde Open-Meteo por meses/años, los guarda en Parquet y permite repetir descargas sin duplicar archivos.
             -   Archivo `download_tlc_data.py`: Descarga los ficheros Parquet mensuales de la NYC TLC (yellow/green/fhv/fhvhv) para un rango de fechas, gestionando skips, errores HTTP y barras de progreso.
-            -   Archivo `main.py`:  Ejecuta los .py del modulo extraccion en orden (uso opciónal).
+            -   Archivo `main.py`:  Ejecuta los .py del modulo extraccion en orden salvo `download_from_minio.py` (uso opciónal).
 
     - Directorio __`procesamiento/`__: Código encargado de procesar y estructurar los datos para su uso óptimo.
         -   Directorio __`capa 1/`__: Contiene código responsable de limpiar los datos extraídos.
