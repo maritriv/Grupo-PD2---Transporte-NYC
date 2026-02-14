@@ -220,7 +220,7 @@ def save_layer3_events_spark_style(
     mode: str = "overwrite",
 ):
     """
-    Guarda EXACTO como Spark partitionBy:
+    Guarda:
       - df_borough_hour_day: partitionBy(date, borough)
       - df_daily_borough: partitionBy(borough)
       - df_type_daily_borough: partitionBy(date, borough)
@@ -255,7 +255,7 @@ def save_layer3_events_spark_style(
         partition_cols=["borough"],
     )
 
-    print("\n[OK] Capa 3 EVENTOS guardada (Spark-style partitioned) en:", out_base)
+    print("\n[OK] Capa 3 EVENTOS guardada en:", out_base)
     print(" - df_borough_hour_day     ->", out_base / "df_borough_hour_day")
     print(" - df_daily_borough        ->", out_base / "df_daily_borough")
     print(" - df_type_daily_borough   ->", out_base / "df_type_daily_borough")
