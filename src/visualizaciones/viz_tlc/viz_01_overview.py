@@ -88,6 +88,21 @@ def plot_avg_price(df_daily):
     plt.legend()
     return fig
 
+def plot_avg_daily_volume_bar(df_daily, year: int):
+    # Media de num_trips por día, por servicio (dentro del año)
+    pdf = (
+        df_daily.groupBy("service_type")
+        .agg(F.avg("num_trips").alias("avg_daily_trips"))
+        .orderBy(F.desc("avg_daily_trips"))
+        .toPandas()
+    )
+
+    fig = plt.figure()
+    plt.bar(pdf["service_type"], pdf["avg_daily_trips"])
+    plt.title(f"Volumen medio diario por servicio ({year})")
+    plt.xlabel("Servicio")
+    plt.ylabel("Viajes/día (media)")
+    return fig
 
 def main(year: int):
     spark = get_spark(f"FaseB-Viz-01-{year}")
@@ -101,6 +116,10 @@ def main(year: int):
 
     fig2 = plot_avg_price(df1)
     save_fig(fig2, f"outputs/viz_tlc/02_avg_price_by_service_{year}.png")
+
+    fig3 = plot_avg_daily_volume_bar(df1, year)
+    save_fig(fig3, f"outputs/viz_tlc/01b_avg_daily_volume_bar_{year}.png")
+
 
     spark.stop()
 
