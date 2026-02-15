@@ -18,7 +18,8 @@ El objetivo es **analizar el sistema de transporte de pago en Nueva York** (taxi
   - **Meteorología** (Open-Meteo)
   - **Eventos** (NYC Open Data)
 - **Pipeline por capas**:
-  - `RAW` (datos descargados)
+  - `Capa 0` (exploración y muestreo inicial de los datos raw de TLC para estimar volumen, precio medio, hora pico y estructura por servicio y mes, generando un resumen exportable)
+  - `Capa 1` (control de calidad estructural sobre los datos en bruto (raw), usando como referencia los Data Dictionaries oficiales de TLC)
   - `Capa 2` (limpieza + estandarización)
   - `Capa 3` (agregación lista para análisis y cruces)
 - **Visualizaciones** para justificar la propuesta (viajes vs meteo vs eventos)
