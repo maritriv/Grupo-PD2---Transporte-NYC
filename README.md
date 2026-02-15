@@ -141,7 +141,9 @@ uv sync
 Este proyecto utiliza **PySpark** para las visualizaciones y agregaciones. Es necesario tener Java 17 (JDK) correctamente configurado.
 
 **2.1. Instalar Java 17**
+
 Si no tienes Java 17 instalado, accede a este enlace y descarga Temurin 17 (JDK).
+
 [Enlace a Temurin 17](https://adoptium.net/es)
 
 Verifica la instalación:
@@ -154,6 +156,7 @@ Debe mostrar algo similar a:
 openjdk version "17.x.x"
 ```
 **2.2. Configurar las variables de entorno**
+
 🪟 En Windows (PowerShell):
 ```
 $env:JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-17.x.x"
@@ -161,6 +164,7 @@ $env:Path="$env:JAVA_HOME\bin;$env:Path"
 $env:PYSPARK_PYTHON="python"
 $env:PYSPARK_DRIVER_PYTHON="python"
 ```
+
 🐧 En macOS / Linux:
 Añadir al .zshrc o .bashrc:
 ```
