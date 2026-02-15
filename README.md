@@ -115,7 +115,7 @@ cd Grupo-PD2---Transporte-NYC
 
 **2.** Descarga las librerías necesarias creando automáticamente un entorno virtual con `uv sync` (desde la ubicación del `pyproject.toml`):
 Instala uv (si no lo tienes instalado):
-   ```
+```
    pip install uv
 ```
 
@@ -157,6 +157,11 @@ uv run -m src.extraccion.download_from_minio --no-skip
 
 > Es necesario que el archivo `credentials.json` esté configurado en la raíz del proyecto antes de ejecutar la descarga.
 
+Para la ejecución de las visualizaciones es necesario descargar datos sobre las zonas de NYC. Ejecutar en la raíz del proyecto el siguiente comando:
+```bash
+wget -P data/external/ https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv
+```
+
 ----
 
 ## Equipo de desarrollo
@@ -173,3 +178,6 @@ Este proyecto fue desarrollado por los siguientes estudiantes del Grado en Ingen
 - [Presentación Entrega 1]()
 - [Memoria Entrega 1](https://docs.google.com/document/d/1znwca7mk1cS6DRcjjuXsSMnBJvdzIXBFVLbBbsAFyls/edit?usp=sharing)
 - [Entrega 1: Distribución del Trabajo](https://docs.google.com/document/d/1K5g5cqhqr7BZ0P4KehW0uqv_OZGyN_cjHm6tFBikYTY/edit?usp=sharing)
+
+# Visualizaciones
+- [Google drive](https://drive.google.com/drive/folders/1gWM-5GU0OTZgczfwt1Mxz7wQFQUuLo5Z?usp=drive_link)
