@@ -173,7 +173,3 @@ Este proyecto fue desarrollado por los siguientes estudiantes del Grado en Ingen
 - [Presentación Entrega 1]()
 - [Memoria Entrega 1](https://docs.google.com/document/d/1znwca7mk1cS6DRcjjuXsSMnBJvdzIXBFVLbBbsAFyls/edit?usp=sharing)
 - [Memoria Entrega 1: Distribución del Trabajo](https://docs.google.com/document/d/1K5g5cqhqr7BZ0P4KehW0uqv_OZGyN_cjHm6tFBikYTY/edit?usp=sharing)
-
-# Enlace a Google Drive:
-Este enlace contiene los datos necarios para el proyecto. La carpeta llamada `data` simula aproximadamente la ejecución de todos los scripts del proyecto en orden.
-- [Enlace a los datos (Drive)](https://drive.google.com/drive/u/2/folders/1gWM-5GU0OTZgczfwt1Mxz7wQFQUuLo5Z).  
