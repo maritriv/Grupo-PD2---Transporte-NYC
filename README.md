@@ -56,45 +56,59 @@ Detalles completos de cada subdirectorio y archivo:
             -   Archivo `main.py`:  Ejecuta los .py del modulo extraccion en orden salvo `download_from_minio.py` (uso opciónal).
 
     - Directorio __`procesamiento/`__: Código encargado de procesar y estructurar los datos para su uso óptimo.
+        -   Archivo __`capa 0/main.py`__: Realiza una exploración diagnóstica sobre muestras representativas de los datos RAW.
+Extrae estadísticas básicas (volumen estimado, precio medio, hora pico, número de variables) y genera un resumen en CSV y Markdown.
+
         -   Directorio __`capa 1/`__: Contiene código responsable de limpiar los datos extraídos.
-          
-                -   Directorio `capa1_resultados`: procesa y unifica datos de películas, profesionales del cine y sus puntuaciones, agregando información sobre premios y popularidad por año. Genera un archivo CSV unificado que contiene los detalles de las películas junto con los premios, nominaciones y popularidad de los profesionales asociados llamado peliculas_definitivo.csv
-                -   Archivo `capa1.py`: Hace una exploración rápida de meses aleatorios, saca stats básicas (volumen, precio medio, hora pico, nº variables) y guarda un resumen en CSV/MD.
-                
+
+                -   Archivo `capa1_fhv.py`: Valida estructura y coherencia del servicio FHV. Comprueba tipos, timestamps, rangos válidos y separa registros en clean y badrows.
+                -   Archivo `capa1_fhvhv.py`: Validación específica para el servicio FHVHV (High Volume). Aplica controles estructurales y temporales adaptados a este esquema.
+                -   Archivo `capa1_green.py`: Valida los datos del servicio Green Taxi, asegurando consistencia en campos monetarios, distancias y timestamps.
+                -   Archivo `capa1_yellow.py`: Valida los datos del servicio Green Taxi, asegurando consistencia en campos monetarios, distancias y timestamps.
+                -   Archivo `main.py`: Ejecuta secuencialmente los validadores de cada servicio y genera los datasets limpios.
                
         -   Directorio __`capa 2/`__: Contiene scripts que integran y fusionan los diferentes conjuntos de datos procesados.
           
                 -   Archivo `capa2_tlc.py`: Une los parquets RAW de taxis/VTC y los deja en un schema estándar (timestamps, variables temporales, precio unificado) y añade lookup de zonas; guarda en data/standarized/.
                 -   Archivo `capa2_eventos.py`: Limpia y tipa los eventos (date/hour/borough/type), crea variables temporales y lo deja listo en formato estandarizado particionado en data/standarized/events/.
                 -   Archivo `capa2_meteo.py`: Limpia y tipa meteorología (date/hour + numéricas), añade variables temporales y la guarda como parquets por año-mes en data/external/meteo/standarized/.
-                -   Archivo `inspect_capa2.py`: Limpia y tipa meteorología (date/hour + numéricas), añade variables temporales y la guarda como parquets por año-mes en data/external/meteo/standarized/.
+                -   Archivo `main.py`: Orquesta la ejecución de todos los scripts de capa 2.
 
         -   Directorio __`capa 3/`__: Contiene scripts que integran y fusionan los diferentes conjuntos de datos procesados.
           
                 -   Archivo `capa3_tlc.py`: Genera agregados de negocio de viajes (tendencia diaria, hotspots por zona/hora, y variabilidad de precio tipo “IQR”) y los guarda en data/aggregated/.
                 -   Archivo `capa3_eventos.py`: Genera agregados de negocio de viajes (tendencia diaria, hotspots por zona/hora, y variabilidad de precio tipo “IQR”) y los guarda en data/aggregated/.
-                -   Archivo `capa3meteo.py`: Construye agregados meteo por hora+día, resumen diario y patrón horario medio, y lo deja en data/external/meteo/aggregated/.
-                -   Archivo `inspect_capa3.py`: Construye agregados meteo por hora+día, resumen diario y patrón horario medio, y lo deja en data/external/meteo/aggregated/.
+                -   Archivo `capa3_meteo.py`: Construye agregados meteo por hora+día, resumen diario y patrón horario medio, y lo deja en data/external/meteo/aggregated/.
+                -   Archivo `main.py`: Ejecuta los procesos de agregación de capa 3 de forma coordinada.
+            
+        -   Archivo __`main.py`__: Orquesta el pipeline completo de procesamiento: capa0 → capa1 → capa2 → capa3. Permite ejecutar todo el flujo estructurado desde datos RAW hasta agregados finales.
 
-    - Directorio __`visualizaciones/`__: Código encargado de procesar y estructurar los datos para su uso óptimo.
-        -   Directorio __`viz_meteo/`__: Contiene código responsable de limpiar los datos extraídos.
+- Directorio __`visualizaciones/`__: Código encargado de procesar y estructurar los datos para su uso óptimo.
+
+  -   Directorio __`viz_conjuntas/`__: Cruza datos TLC + Meteorología + Eventos.
+
+                -   Archivo `viz_2024.py`: Genera visualizaciones conjuntas para un año concreto. Utiliza agregados de capa 3 y Spark para el cruce eficiente de datasets.
+
+  -   Directorio __`viz_meteo/`__: Contiene código responsable de limpiar los datos extraídos.
      
-                -   Archivo `clima_tipico.py.py`: Grafica el “día promedio” de NYC usando el patrón horario (temp media + desviación).
+                -   Archivo `clima_tipico.py`: Grafica el “día promedio” de NYC usando el patrón horario (temp media + desviación).
                 -   Archivo `estacionalidad.py`: Visualiza estacionalidad: boxplots de temperatura por mes y comparación de precipitación entre laborables vs finde.
                 -   Archivo `horaria_calor_viento.py`: Genera heatmaps por día de semana y hora para temperatura y viento (ej: enero vs diciembre).
                 -   Archivo `overview.py`: Muestra la evolución histórica diaria (temperatura media/min/max + precipitación total) para detectar días extremos.
                 -   Archivo `tendecias_clima.py`: Saca tendencias generales (temp + precip) y un gráfico con la distribución de códigos WMO (weather_code).
 
-        -   Directorio __`viz_tlc/`__: Contiene código responsable de limpiar los datos extraídos.
+
+  -   Directorio __`viz_tlc/`__: Contiene código responsable de limpiar los datos extraídos.
      
                 -   Archivo `visualizaciones_compartidas.py.py`: Genera scatterplots comparativos (distancia vs precio) entre servicios (yellow/green/fhvhv) para varios meses, usando muestreo eficiente con PyArrow.
                 -   Archivo `visualizaciones_individuales.py`: Procesa cada Parquet por servicio y crea visualizaciones por archivo (heatmap de demanda por día/hora y dispersión precio vs distancia), aplicando muestreo para evitar problemas de memoria.
                 -   Archivo `viz_01_overview.py`: Crea un overview temporal desde Capa 3: evolución del número de viajes y del precio medio diario por servicio.
                 -   Archivo `viz_02_hotspots.py`: Construye heatmaps de “hotspots” (demanda media y precio medio) por zona y hora, quedándose con las zonas top por volumen para que sea legible.
                 -   Archivo `viz_03_taxi_vs_vtc.py`: Compara Taxi vs VTC en zonas clave, graficando patrones horarios de demanda y precio medio por servicio.
-                -   Archivo `viz_0t_tensions.py`: Analiza “tensiones” del mercado con la Capa 3: scatter volumen vs variabilidad (IQR) y ranking de oportunidades con biz_score.
+                -   Archivo `viz_04_tensions.py`: Analiza “tensiones” del mercado con la Capa 3: scatter volumen vs variabilidad (IQR) y ranking de oportunidades con biz_score.
                 -   Archivo `viz_common.py`: Funciones comunes para las visualizaciones (Spark session, lectura de Capa 3, normalización de fechas y guardado de figuras).
 
+- Archivo __`main.py/`__: Script orquestador principal del proyecto. Ejecuta de forma secuencial el pipeline completo, lanzando primero los procesos de extracción de datos (src/extraccion/) y posteriormente el flujo de procesamiento por capas (capa0 → capa1 → capa2 → capa3). Permite ejecutar todo el proyecto desde datos externos hasta agregados finales listos para análisis y visualización mediante un único comando.
 
 ---
 
