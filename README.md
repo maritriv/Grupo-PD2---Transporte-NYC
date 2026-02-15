@@ -212,11 +212,37 @@ uv run -m src.extraccion.download_from_minio --no-skip
 
 > Es necesario que el archivo `credentials.json` esté configurado en la raíz del proyecto antes de ejecutar la descarga.
 
-Para la ejecución de las visualizaciones es necesario descargar datos sobre las zonas de NYC. Ejecutar en la raíz del proyecto el siguiente comando:
+Para ejecutar las visualizaciones es necesario descargar los datos de zonas de NYC.
+Ejecuta el siguiente comando en la raíz del proyecto según tu sistema:
+
+**Linux / WSL / macOS (con wget):**
+
 ```bash
 wget -P data/external/ https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv
 ```
 
+Si wget no está instalado:
+- Ubuntu/WSL: sudo apt install wget
+- macOS (Homebrew): brew install wget
+
+Alternativa en macOS (con curl):
+```bash
+curl -o data/external/taxi_zone_lookup.csv https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv
+```
+
+**Windows – PowerShell**
+
+```bash
+New-Item -ItemType Directory -Path "data\external" -Force
+Invoke-WebRequest -Uri "https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv" -OutFile "data\external\taxi_zone_lookup.csv"
+```
+
+**Windows – Command Prompt (cmd)**
+
+```bash
+mkdir data\external
+curl -o data\external\taxi_zone_lookup.csv https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv
+```
 ----
 
 ## Equipo de desarrollo
