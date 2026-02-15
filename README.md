@@ -163,10 +163,10 @@ uv run -m src.extraccion.download_from_minio --no-skip
 
 Este proyecto fue desarrollado por los siguientes estudiantes del Grado en Ingeniería de Datos e Inteligencia Artificial (UCM): 
 - Vega García Camacho
-- Marina Triviño de las Heras
-- Rosa Gómez-Gil Jónsdóttir
-- Ignacio Ramírez Suárez
+- Rosa Gómez-Gil Jónsdóttir 
 - Daniel Higueras Llorente
+- Ignacio Ramírez Suárez
+- Marina Triviño de las Heras
 
 ##  Recursos adicionales
 # Memorias y presentaciones
