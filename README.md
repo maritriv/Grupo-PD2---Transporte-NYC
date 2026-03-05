@@ -257,9 +257,13 @@ Este proyecto fue desarrollado por los siguientes estudiantes del Grado en Ingen
 
 ##  Recursos adicionales
 # Memorias y presentaciones
+**Entrega 1**
 - [Presentación Entrega 1](https://docs.google.com/presentation/d/1tKNixIGUhMHiNGJyOn6zXNW0MvKN4t1Iz4JFZ0_KaAE/edit?slide=id.g3c872e10c63_0_294#slide=id.g3c872e10c63_0_294)
 - [Memoria Entrega 1](https://docs.google.com/document/d/1znwca7mk1cS6DRcjjuXsSMnBJvdzIXBFVLbBbsAFyls/edit?usp=sharing)
 - [Entrega 1: Distribución del Trabajo](https://docs.google.com/document/d/1K5g5cqhqr7BZ0P4KehW0uqv_OZGyN_cjHm6tFBikYTY/edit?usp=sharing)
+
+**Entrega 2**
+- [Memoria Entrega 2](https://docs.google.com/document/d/12uWMO4wAyDforRW51FLFtRzltHT_LC2Gat92gY-dCvg/edit?tab=t.0)
 
 # Visualizaciones
 - [Google drive](https://drive.google.com/drive/folders/1gWM-5GU0OTZgczfwt1Mxz7wQFQUuLo5Z?usp=drive_link)
