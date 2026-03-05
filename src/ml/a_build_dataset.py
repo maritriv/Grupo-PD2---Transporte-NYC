@@ -7,16 +7,17 @@ from pathlib import Path
 import pandas as pd
 
 # Para generar dataset completo
-# uv run -m src.ml.build_dataset
+# uv run -m src.ml.a_build_dataset
 # Genera: data/ml/dataset_completo.parquet
-
-# Para generar un dataset más pequeño apra entrenar los modelos más rápidamente
-# uv run -m src.ml.build_dataset --from 2024-01-01 --to 2024-01-14
+#
+# Para generar un dataset más pequeño para entrenar los modelos más rápidamente (rango por fechas)
+# uv run -m src.ml.a_build_dataset --from 2024-01-01 --to 2024-01-14
 # Genera: data/ml/dataset_rango_2024-01-01__2024-01-14.parquet
+#
+# Para generar un dataset más pequeño para entrenar los modelos más rápidamente (muestreo aleatorio)
+# uv run -m src.ml.a_build_dataset --sample-frac 0.01
+# Genera: data/ml/dataset_completo.parquet pero con 1% de filas (si no pasas --from/--to)
 
-# Para generar un dataset más pequeño para entrenar lso modelos más rápidamente, con rango aleatorio
-# uv run -m src.ml.build_dataset --sample-frac 0.01
-# Genera: data/ml/dataset_completo.parquet pero con 1% de filas
 
 # -----------------------
 # Helpers de lectura
@@ -65,7 +66,8 @@ def build_dataset(
     - Join meteo: por date+hour
     - Join eventos: agregados ciudad por date+hour
     - Features lags/rolling por zona+servicio
-    - Target stress_score + is_stress
+    - Métrica de negocio: biz_score = std_price * log(1+num_trips)
+    - (Opcional) Targets: stress_score (= biz_score) e is_stress (top10%)
 
     Por defecto (sin date_from/date_to ni sample_frac) => dataset completo.
     """
@@ -75,12 +77,13 @@ def build_dataset(
     tlc_base = project_root / tlc_dir
     tlc = read_partitioned_parquet_dir(tlc_base)
 
-    # Normalizar tipos
     ensure_cols(
         tlc,
         ["pu_location_id", "hour", "date", "service_type", "num_trips", "avg_price", "std_price"],
         "TLC",
     )
+
+    # Normalizar tipos
     tlc["date"] = pd.to_datetime(tlc["date"], errors="coerce").dt.date
     tlc["hour"] = pd.to_numeric(tlc["hour"], errors="coerce").astype("Int64")
     tlc["pu_location_id"] = pd.to_numeric(tlc["pu_location_id"], errors="coerce").astype("Int64")
@@ -125,7 +128,7 @@ def build_dataset(
         df = tlc.merge(meteo, on=["date", "hour"], how="left")
     else:
         df = tlc.copy()
-        # Mantener esquema estable
+        # Mantener esquema estable si falta meteo
         df["rain_mm_sum"] = pd.NA
         df["temp_c_mean"] = pd.NA
         df["wind_kmh_mean"] = pd.NA
@@ -157,10 +160,18 @@ def build_dataset(
     df["day_of_week"] = pd.to_datetime(df["date"]).dt.dayofweek.astype(int)
     df["month"] = pd.to_datetime(df["date"]).dt.month.astype(int)
 
+    # Flags útiles
+    df["is_weekend"] = (df["day_of_week"] >= 5).astype(int)
+    df["is_peak_hour"] = df["hour"].isin([7, 8, 9, 16, 17, 18, 19]).astype(int)
+
     df[["lag_1h_trips", "lag_24h_trips"]] = df[["lag_1h_trips", "lag_24h_trips"]].fillna(0)
 
-    # --- 5) Target
-    df["stress_score"] = df["std_price"].fillna(0) * df["num_trips"].fillna(0).apply(lambda x: math.log1p(float(x)))
+    # --- 5) Métrica de negocio + targets auxiliares
+    # biz_score: tensión mercado = variabilidad (std_price) * log(1 + demanda)
+    df["biz_score"] = df["std_price"].fillna(0) * df["num_trips"].fillna(0).apply(lambda x: math.log1p(float(x)))
+
+    # Si queréis mantenerlo como target operativo:
+    df["stress_score"] = df["biz_score"]
     thr = df["stress_score"].quantile(0.90)
     df["is_stress"] = (df["stress_score"] >= thr).astype(int)
 
@@ -176,10 +187,20 @@ def build_dataset(
 def main() -> None:
     p = argparse.ArgumentParser(
         description="Construye dataset de modelado (TLC + Meteo + Eventos). "
-                    "Por defecto genera el dataset completo."
+        "Por defecto genera el dataset completo."
     )
-    p.add_argument("--from", dest="date_from", default=None, help="YYYY-MM-DD (inclusive). Si se indica junto con --to, genera dataset por rango.")
-    p.add_argument("--to", dest="date_to", default=None, help="YYYY-MM-DD (inclusive). Si se indica junto con --from, genera dataset por rango.")
+    p.add_argument(
+        "--from",
+        dest="date_from",
+        default=None,
+        help="YYYY-MM-DD (inclusive). Si se indica junto con --to, genera dataset por rango.",
+    )
+    p.add_argument(
+        "--to",
+        dest="date_to",
+        default=None,
+        help="YYYY-MM-DD (inclusive). Si se indica junto con --from, genera dataset por rango.",
+    )
     p.add_argument("--sample-frac", type=float, default=None, help="Opcional: muestreo aleatorio (0<frac<1).")
     p.add_argument("--out-dir", default="data/ml", help="Carpeta de salida (default: data/ml).")
     args = p.parse_args()
