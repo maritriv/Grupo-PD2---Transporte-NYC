@@ -4,6 +4,7 @@
 rutas:
   data: "data"
   outputs: "outputs"
+  config: "config"
 
 # Configuración de descarga
 descarga:
@@ -78,3 +79,17 @@ meteo:
   
   # Configuración de red
   timeout: 120
+
+# Configuración de Spark optimizada para 28GB
+spark:
+  app_name: "NYC_Transport_Stress_SaaS"
+  # 'local[*]' usa todos los núcleos disponibles
+  master: "local[*]"
+  driver_memory: "8g"
+  executor_memory: "4g"
+  # El puerto de la UI (por defecto 4040, lo cambiamos para evitar conflictos)
+  ui_port: 4050
+  # Particiones: para 28GB local, 200 suele estar bien, pero para dev mejor 8-16
+  shuffle_partitions: 16
+  # Formato de guardado por defecto
+  default_format: "parquet"
