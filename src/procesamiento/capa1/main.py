@@ -31,7 +31,7 @@ def main() -> None:
         "src.procesamiento.capa1.capa1_fhv",
         "src.procesamiento.capa1.capa1_green",
         "src.procesamiento.capa1.capa1_yellow",
-        #"src.procesamiento.capa1.capa1_fhvhv",
+        "src.procesamiento.capa1.capa1_fhvhv",
     ]
 
     for m in modulos:
