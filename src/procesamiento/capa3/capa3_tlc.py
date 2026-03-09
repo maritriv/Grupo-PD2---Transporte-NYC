@@ -292,9 +292,24 @@ def build_layer3_streaming(
                 "avg_price": st.mean(),
                 "price_variability": pv,
                 "biz_score": pv * math.log1p(st.n),
+                "biz_score_iqr": pv,
             }
         )
     df_variability = pd.DataFrame(rows3)
+
+    # Variantes z-score del biz_score (necesitan stats globales)
+    if not df_variability.empty:
+        iqr = df_variability["price_variability"].astype(float)
+        log_vol = np.log1p(df_variability["num_trips"].astype(float))
+
+        iqr_mean, iqr_std = float(iqr.mean()), float(iqr.std())
+        lv_mean, lv_std = float(log_vol.mean()), float(log_vol.std())
+
+        z_iqr = (iqr - iqr_mean) / iqr_std if iqr_std > 0 else 0.0
+        z_lv = (log_vol - lv_mean) / lv_std if lv_std > 0 else 0.0
+
+        df_variability["biz_score_zsum"] = z_iqr + z_lv
+        df_variability["biz_score_zproduct"] = z_iqr * z_lv
 
     # Tipos consistentes
     for dfx in [df_daily_service, df_zone_hour_day_global, df_zone_hour_day_service, df_variability]:

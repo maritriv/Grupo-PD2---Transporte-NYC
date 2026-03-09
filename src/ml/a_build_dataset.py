@@ -52,6 +52,7 @@ def build_dataset(
     tlc_dir: str = "data/aggregated/df_zone_hour_day_service",
     meteo_path: str = "data/external/meteo/aggregated/df_hour_day/data.parquet",
     events_dir: str = "data/aggregated/events/df_borough_hour_day",
+    variability_dir: str = "data/aggregated/df_variability",
     # Output
     out_path: str = "data/ml/dataset_completo.parquet",
     # Rango / sample
@@ -166,11 +167,57 @@ def build_dataset(
 
     df[["lag_1h_trips", "lag_24h_trips"]] = df[["lag_1h_trips", "lag_24h_trips"]].fillna(0)
 
-    # --- 5) Métrica de negocio + targets auxiliares
-    # biz_score: tensión mercado = variabilidad (std_price) * log(1 + demanda)
-    df["biz_score"] = df["std_price"].fillna(0) * df["num_trips"].fillna(0).apply(lambda x: math.log1p(float(x)))
+    # --- 5) Métrica de negocio: biz_score (4 variantes)
+    #
+    # Variabilidad: usamos IQR de capa3/df_variability si existe,
+    # o std_price como proxy si no se ha ejecutado capa3.
+    var_base = project_root / variability_dir
+    has_iqr = False
+    if var_base.exists():
+        try:
+            var_df = read_partitioned_parquet_dir(var_base)
+            if "price_variability" in var_df.columns:
+                var_df["pu_location_id"] = pd.to_numeric(var_df["pu_location_id"], errors="coerce").astype("Int64")
+                var_df["hour"] = pd.to_numeric(var_df["hour"], errors="coerce").astype("Int64")
+                var_df["service_type"] = var_df["service_type"].astype(str)
+                iqr_map = var_df[["pu_location_id", "hour", "service_type", "price_variability"]].drop_duplicates()
+                df = df.merge(iqr_map, on=["pu_location_id", "hour", "service_type"], how="left")
+                has_iqr = True
+                print(f"   IQR join: {df['price_variability'].notna().sum():,}/{len(df):,} filas con IQR de capa3")
+        except Exception as exc:
+            print(f"⚠️  No se pudo leer df_variability: {exc}")
 
-    # Si queréis mantenerlo como target operativo:
+    if has_iqr:
+        # Rellenar filas sin IQR con std_price como fallback
+        df["price_variability"] = df["price_variability"].fillna(df["std_price"].fillna(0))
+        variability = df["price_variability"].astype(float)
+    else:
+        # Sin capa3: usar std_price como proxy de variabilidad
+        variability = df["std_price"].fillna(0).astype(float)
+        df["price_variability"] = variability
+        print("   IQR no disponible → usando std_price como proxy de variabilidad")
+
+    log_volume = df["num_trips"].fillna(0).astype(float).apply(lambda x: math.log1p(x))
+
+    # Agregador 1 — Solo variabilidad (baseline del índice)
+    df["biz_score_iqr"] = variability
+
+    # Agregador 2 — Variabilidad × actividad (recomendado)
+    df["biz_score"] = variability * log_volume
+
+    # Agregador 3 — Índice normalizado (z-sum)
+    v_mean, v_std = float(variability.mean()), float(variability.std())
+    lv_mean, lv_std = float(log_volume.mean()), float(log_volume.std())
+
+    z_var = (variability - v_mean) / v_std if v_std > 0 else 0.0
+    z_lv = (log_volume - lv_mean) / lv_std if lv_std > 0 else 0.0
+
+    df["biz_score_zsum"] = z_var + z_lv
+
+    # Agregador 4 — Multiplicación normalizada
+    df["biz_score_zproduct"] = z_var * z_lv
+
+    # Target operativo: stress_score = biz_score (Agregador 2)
     df["stress_score"] = df["biz_score"]
     thr = df["stress_score"].quantile(0.90)
     df["is_stress"] = (df["stress_score"] >= thr).astype(int)
