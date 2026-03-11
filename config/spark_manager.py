@@ -68,8 +68,8 @@ class SparkManager:
             conf = cargar_config().get('spark', {})
             
             # 3. Definir rutas temporales dentro del proyecto (para que no ensucie el sistema)
-            warehouse_path = str(obtener_ruta('data') / "spark-warehouse")
-            temp_path = str(obtener_ruta('data') / "spark-temp")
+            warehouse_path = str(obtener_ruta('data').parent / "spark-warehouse")
+            temp_path = str(obtener_ruta('data').parent / "spark-temp")
             
             # Asegurar que existan
             os.makedirs(temp_path, exist_ok=True)
@@ -85,6 +85,7 @@ class SparkManager:
                 .config("spark.driver.memory", conf.get('driver_memory', '4g'))
                 .config("spark.executor.memory", conf.get('executor_memory', '2g'))
                 .config("spark.sql.warehouse.dir", warehouse_path)
+                .config("spark.sql.files.maxPartitionBytes", "67108864") # Esto obliga a Spark a leer los archivos en trocitos de 64MB
                 .config("spark.local.dir", temp_path)
                 .config("spark.ui.port", conf.get('ui_port', 4050))
                 .config("spark.sql.shuffle.partitions", conf.get('shuffle_partitions', 16))

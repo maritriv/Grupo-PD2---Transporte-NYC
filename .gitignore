@@ -1,6 +1,10 @@
 # Data
 data/
 
+# Spark
+spark-warehouse/
+spark-temp/
+
 # Credenciales MinIO
 credentials.json
 
