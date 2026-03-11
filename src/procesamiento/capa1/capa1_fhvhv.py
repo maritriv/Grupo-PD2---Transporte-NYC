@@ -8,7 +8,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pandas as pd
 import pyarrow as pa
@@ -78,6 +78,20 @@ FLOAT_COLS = [
     "driver_pay",
     "cbd_congestion_fee",
 ]
+
+# -----------------------------
+# Reglas de plausibilidad fuerte
+# -----------------------------
+MAX_TRIP_DURATION_MIN = 360.0   # 6 horas
+MAX_REASONABLE_SPEED_MPH = 100.0
+
+# Warning, no invalid directo
+EXTREME_BASE_FARE = 400.0
+EXTREME_DRIVER_PAY = 400.0
+
+# Tolerancia entre trip_time (segundos reportados por dataset)
+# y duración derivada de pickup/dropoff.
+TRIP_TIME_TOLERANCE_SEC = 300  # 5 minutos
 
 
 # -----------------------------
@@ -181,10 +195,56 @@ def _normalize_base_num(s: pd.Series) -> Tuple[pd.Series, pd.Series]:
     return norm, invalid
 
 
+def _build_reason_column(masks: Dict[str, pd.Series], index: pd.Index) -> pd.Series:
+    """
+    Construye una columna string con las razones activadas por fila.
+    Ejemplo:
+        'pickup_datetime__future;trip_miles__negative'
+    """
+    reasons = pd.Series("", index=index, dtype="string")
+
+    for name, mask in masks.items():
+        mask_filled = mask.fillna(False)
+        reasons = reasons.where(~mask_filled, reasons + name + ";")
+
+    return reasons.str.rstrip(";").replace("", pd.NA)
+
+
 def discover_parquet_files(input_path: Path) -> List[Path]:
     if input_path.is_file():
         return [input_path]
     return sorted([p for p in input_path.rglob("*.parquet") if p.is_file()])
+
+
+def extract_expected_year_month_from_filename(path: Path) -> Tuple[Optional[int], Optional[int]]:
+    """
+    Extrae YYYY-MM del nombre tipo:
+        fhvhv_tripdata_2023-07.parquet
+    Si no puede extraerlo, devuelve (None, None).
+    """
+    m = re.search(r"(\d{4})-(\d{2})", path.stem)
+    if not m:
+        return None, None
+    return int(m.group(1)), int(m.group(2))
+
+
+def load_valid_location_ids(location_csv: Optional[Path]) -> Optional[Set[int]]:
+    """
+    Carga IDs válidos de zonas TLC desde un CSV, si se proporciona.
+    Espera una columna LocationID.
+    Si no hay CSV, devuelve None y no se aplica esta validación.
+    """
+    if location_csv is None:
+        return None
+    if not location_csv.exists():
+        raise FileNotFoundError(f"No existe el catálogo de zonas TLC: {location_csv}")
+
+    zones = pd.read_csv(location_csv)
+    if "LocationID" not in zones.columns:
+        raise ValueError(f"El CSV de zonas TLC no contiene columna 'LocationID': {location_csv}")
+
+    ids = pd.to_numeric(zones["LocationID"], errors="coerce").dropna().astype(int)
+    return set(ids.tolist())
 
 
 @dataclass
@@ -194,7 +254,12 @@ class ValidationResult:
     report: Dict[str, Any]
 
 
-def validate_fhvhv_df(df: pd.DataFrame, strict_columns: bool = False) -> ValidationResult:
+def validate_fhvhv_df(
+    df: pd.DataFrame,
+    strict_columns: bool = False,
+    source_file: Optional[Path] = None,
+    valid_location_ids: Optional[Set[int]] = None,
+) -> ValidationResult:
     report: Dict[str, Any] = {"n_rows": int(len(df))}
 
     # 1) Estandarizar columnas
@@ -209,7 +274,7 @@ def validate_fhvhv_df(df: pd.DataFrame, strict_columns: bool = False) -> Validat
     invalid_masks: Dict[str, pd.Series] = {}
     warning_masks: Dict[str, pd.Series] = {}
 
-    # 2) Required mínimo (espacio + tiempo)
+    # 2) Required mínimo
     for c in ["hvfhs_license_num", "pickup_datetime", "dropoff_datetime", "PULocationID", "DOLocationID"]:
         invalid_masks[f"{c}__missing_required"] = df[c].isna()
 
@@ -224,7 +289,7 @@ def validate_fhvhv_df(df: pd.DataFrame, strict_columns: bool = False) -> Validat
         & ~df["hvfhs_license_num"].isin(KNOWN_HVFHS)
     )
 
-    # 4) Base numbers (warnings)
+    # 4) Base numbers (warning)
     df["dispatching_base_num"], inv_disp_fmt = _normalize_base_num(df["dispatching_base_num"])
     df["originating_base_num"], inv_orig_fmt = _normalize_base_num(df["originating_base_num"])
     warning_masks["dispatching_base_num__missing"] = df["dispatching_base_num"].isna()
@@ -240,24 +305,61 @@ def validate_fhvhv_df(df: pd.DataFrame, strict_columns: bool = False) -> Validat
         else:
             warning_masks[f"{c}__invalid_datetime"] = inv
 
-    # 6) Coherencia temporal
     pickup = df["pickup_datetime"]
     drop = df["dropoff_datetime"]
     req = df["request_datetime"]
     on_scene = df["on_scene_datetime"]
 
+    # 6) Coherencia temporal fuerte
     invalid_masks["datetime__dropoff_before_pickup"] = pickup.notna() & drop.notna() & (drop < pickup)
+
+    # Fechas futuras
+    now_ts = pd.Timestamp.now()
+    invalid_masks["pickup_datetime__future"] = pickup.notna() & (pickup > now_ts)
+    invalid_masks["dropoff_datetime__future"] = drop.notna() & (drop > now_ts)
+    warning_masks["request_datetime__future"] = req.notna() & (req > now_ts)
+    warning_masks["on_scene_datetime__future"] = on_scene.notna() & (on_scene > now_ts)
+
+    # Validación frente al mes esperado del fichero
+    exp_year, exp_month = (None, None)
+    if source_file is not None:
+        exp_year, exp_month = extract_expected_year_month_from_filename(source_file)
+
+    if exp_year is not None and exp_month is not None:
+        invalid_masks["pickup_datetime__outside_expected_file_month"] = (
+            pickup.notna()
+            & ((pickup.dt.year != exp_year) | (pickup.dt.month != exp_month))
+        )
+
+        month_start = pd.Timestamp(year=exp_year, month=exp_month, day=1)
+        next_month_start = month_start + pd.offsets.MonthBegin(1)
+        month_end_last_instant = next_month_start - pd.Timedelta(seconds=1)
+        dropoff_latest_allowed = month_end_last_instant + pd.Timedelta(minutes=MAX_TRIP_DURATION_MIN)
+
+        invalid_masks["dropoff_datetime__too_far_beyond_expected_month"] = (
+            drop.notna() & (drop > dropoff_latest_allowed)
+        )
+
+    # Warnings temporales suaves
     warning_masks["datetime__request_after_pickup"] = req.notna() & pickup.notna() & (req > pickup)
     warning_masks["datetime__on_scene_after_pickup"] = on_scene.notna() & pickup.notna() & (on_scene > pickup)
     warning_masks["datetime__on_scene_before_request"] = on_scene.notna() & req.notna() & (on_scene < req)
 
-    # 7) Location IDs + trip_time int
+    # 7) Location IDs + trip_time
     df["PULocationID"], inv_pu_type, inv_pu_dec = _to_int_nullable(df["PULocationID"])
     df["DOLocationID"], inv_do_type, inv_do_dec = _to_int_nullable(df["DOLocationID"])
     invalid_masks["PULocationID__invalid_type"] = inv_pu_type
     invalid_masks["PULocationID__invalid_decimal"] = inv_pu_dec
     invalid_masks["DOLocationID__invalid_type"] = inv_do_type
     invalid_masks["DOLocationID__invalid_decimal"] = inv_do_dec
+
+    if valid_location_ids is not None:
+        invalid_masks["PULocationID__unknown_location_id"] = (
+            df["PULocationID"].notna() & ~df["PULocationID"].isin(valid_location_ids)
+        )
+        invalid_masks["DOLocationID__unknown_location_id"] = (
+            df["DOLocationID"].notna() & ~df["DOLocationID"].isin(valid_location_ids)
+        )
 
     df["trip_time"], inv_tt_type, inv_tt_dec = _to_int_nullable(df["trip_time"])
     invalid_masks["trip_time__invalid_type"] = inv_tt_type
@@ -271,7 +373,7 @@ def validate_fhvhv_df(df: pd.DataFrame, strict_columns: bool = False) -> Validat
 
     invalid_masks["trip_miles__negative"] = df["trip_miles"].notna() & (df["trip_miles"] < 0)
 
-    # Importes negativos: warning
+    # Importes negativos: warning, no invalid directo
     money_cols = [
         "base_passenger_fare",
         "tolls",
@@ -286,6 +388,14 @@ def validate_fhvhv_df(df: pd.DataFrame, strict_columns: bool = False) -> Validat
     for c in money_cols:
         warning_masks[f"{c}__negative"] = df[c].notna() & (df[c] < 0)
 
+    # Warning de importes extremos
+    warning_masks["base_passenger_fare__extreme"] = (
+        df["base_passenger_fare"].notna() & (df["base_passenger_fare"] > EXTREME_BASE_FARE)
+    )
+    warning_masks["driver_pay__extreme"] = (
+        df["driver_pay"].notna() & (df["driver_pay"] > EXTREME_DRIVER_PAY)
+    )
+
     # 9) Flags Y/N
     for c in YN_FLAGS:
         s = _normalize_str(df[c])
@@ -293,10 +403,48 @@ def validate_fhvhv_df(df: pd.DataFrame, strict_columns: bool = False) -> Validat
         warning_masks[f"{c}__missing"] = s.isna()
         invalid_masks[f"{c}__out_of_domain"] = s.notna() & ~s.isin(ALLOWED_YN)
 
-    # 10) cbd_congestion_fee: desde 2025 -> missing normal (warning)
+    # 10) cbd_congestion_fee missing
     warning_masks["cbd_congestion_fee__missing"] = df["cbd_congestion_fee"].isna()
 
-    # 11) Report
+    # 11) Duración y velocidad implícita
+    trip_duration_min = (drop - pickup).dt.total_seconds() / 60.0
+    df["trip_duration_min"] = trip_duration_min.astype("Float64")
+
+    invalid_masks["trip_duration_min__negative"] = trip_duration_min.notna() & (trip_duration_min < 0)
+    invalid_masks["trip_duration_min__too_long"] = trip_duration_min.notna() & (trip_duration_min > MAX_TRIP_DURATION_MIN)
+    warning_masks["trip_duration_min__zero"] = trip_duration_min.notna() & (trip_duration_min == 0)
+
+    duration_hours = trip_duration_min / 60.0
+    implied_speed_mph = pd.Series(pd.NA, index=df.index, dtype="Float64")
+    valid_speed_base = (
+        df["trip_miles"].notna()
+        & duration_hours.notna()
+        & (df["trip_miles"] > 0)
+        & (duration_hours > 0)
+    )
+    implied_speed_mph.loc[valid_speed_base] = (
+        df.loc[valid_speed_base, "trip_miles"] / duration_hours.loc[valid_speed_base]
+    ).astype("Float64")
+    df["implied_speed_mph"] = implied_speed_mph
+
+    invalid_masks["implied_speed_mph__too_high"] = (
+        df["implied_speed_mph"].notna() & (df["implied_speed_mph"] > MAX_REASONABLE_SPEED_MPH)
+    )
+
+    # 12) Coherencia entre trip_time reportado y duración derivada
+    # trip_time suele venir en segundos en este dataset.
+    derived_trip_time_sec = (drop - pickup).dt.total_seconds()
+    trip_time_diff_sec = (df["trip_time"] - derived_trip_time_sec).abs()
+    warning_masks["trip_time__mismatch_vs_datetimes"] = (
+        df["trip_time"].notna()
+        & derived_trip_time_sec.notna()
+        & (trip_time_diff_sec > TRIP_TIME_TOLERANCE_SEC)
+    )
+
+    # 13) Duplicados exactos
+    invalid_masks["row__duplicate_exact"] = df.duplicated(keep="first")
+
+    # 14) Report + razones
     report["invalid_counts"] = {k: int(v.fillna(False).sum()) for k, v in invalid_masks.items()}
     report["warning_counts"] = {k: int(v.fillna(False).sum()) for k, v in warning_masks.items()}
 
@@ -304,15 +452,24 @@ def validate_fhvhv_df(df: pd.DataFrame, strict_columns: bool = False) -> Validat
     for v in invalid_masks.values():
         any_invalid |= v.fillna(False)
 
+    df = df.copy()
+    df["warning_reasons"] = _build_reason_column(warning_masks, df.index)
+
     df_bad = df.loc[any_invalid].copy()
+    df_bad["rejection_reasons"] = _build_reason_column(invalid_masks, df_bad.index)
+
     df_clean = df.loc[~any_invalid].copy()
 
     report["n_bad_rows"] = int(len(df_bad))
     report["n_clean_rows"] = int(len(df_clean))
+    report["n_warning_rows_in_clean"] = int(df_clean["warning_reasons"].notna().sum())
 
-    # Reordenar columnas a esquema final
-    df_clean = df_clean.reindex(columns=EXPECTED_COLUMNS)
-    df_bad = df_bad.reindex(columns=EXPECTED_COLUMNS)
+    # Reordenar columnas a esquema final conservando trazabilidad adicional
+    final_cols = EXPECTED_COLUMNS + ["trip_duration_min", "implied_speed_mph", "warning_reasons"]
+    bad_cols = EXPECTED_COLUMNS + ["trip_duration_min", "implied_speed_mph", "warning_reasons", "rejection_reasons"]
+
+    df_clean = df_clean.reindex(columns=[c for c in final_cols if c in df_clean.columns])
+    df_bad = df_bad.reindex(columns=[c for c in bad_cols if c in df_bad.columns])
 
     return ValidationResult(df_clean=df_clean, df_bad=df_bad, report=report)
 
@@ -323,7 +480,7 @@ def _accumulate_counts(dst: Dict[str, int], src: Dict[str, int]) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Capa1 FHVHV: validación estructural según data dictionary HVFHS.")
+    p = argparse.ArgumentParser(description="Capa1 FHVHV: validación estructural + plausibilidad fuerte según data dictionary HVFHS.")
 
     p.add_argument("--service-folder", type=str, default="fhvhv", help="Subcarpeta dentro de data/raw. Default: fhvhv")
     p.add_argument("--prefix", type=str, default="fhvhv_tripdata_", help="Prefijo. Default: fhvhv_tripdata_")
@@ -333,8 +490,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--strict-columns", action="store_true", help="Falla si faltan columnas del diccionario.")
     p.add_argument("--write-bad", action="store_true", help="Escribe bad_rows.")
     p.add_argument("--limit-files", type=int, default=0, help="Limita nº ficheros (debug).")
+    p.add_argument(
+        "--taxi-zones-csv",
+        type=str,
+        default="",
+        help="Ruta a taxi_zone_lookup.csv para validar LocationID reales. Si vacío, se omite esta validación.",
+    )
 
-    # ✅ batch-size
+    # batch-size
     p.add_argument(
         "--batch-size",
         type=int,
@@ -342,7 +505,7 @@ def parse_args() -> argparse.Namespace:
         help="Filas por batch (evita reventar RAM). Default: 200000",
     )
 
-    # ✅ liberar memoria más agresivo
+    # liberar memoria más agresivo
     p.add_argument(
         "--gc-every",
         type=int,
@@ -363,6 +526,9 @@ def main() -> None:
     input_path = Path(args.input) if args.input else base_raw
     output_dir = Path(args.output) if args.output else base_out
 
+    location_csv = Path(args.taxi_zones_csv) if args.taxi_zones_csv else None
+    valid_location_ids = load_valid_location_ids(location_csv)
+
     # Resolver ficheros
     if args.months:
         files: List[Path] = []
@@ -382,13 +548,14 @@ def main() -> None:
     if not files:
         raise FileNotFoundError(f"No se encontraron parquet para input={input_path} (service-folder={args.service_folder})")
 
-    console.print(Panel.fit("[bold cyan]CAPA 1 — FHVHV: VALIDACIÓN (STREAMING POR BATCHES)[/bold cyan]"))
+    console.print(Panel.fit("[bold cyan]CAPA 1 — FHVHV: VALIDACIÓN (STREAMING + PLAUSIBILIDAD)[/bold cyan]"))
 
     table = Table(title="Capa1 FHVHV — resumen por fichero", header_style="bold magenta")
     table.add_column("Fichero")
     table.add_column("Rows", justify="right")
     table.add_column("Clean", justify="right")
     table.add_column("Bad", justify="right")
+    table.add_column("Warn(clean)", justify="right")
 
     summary: Dict[str, Any] = {
         "service_folder": args.service_folder,
@@ -396,7 +563,7 @@ def main() -> None:
         "batch_size": args.batch_size,
         "n_files": len(files),
         "files": [],
-        "totals": {"n_rows": 0, "n_clean_rows": 0, "n_bad_rows": 0},
+        "totals": {"n_rows": 0, "n_clean_rows": 0, "n_bad_rows": 0, "n_warning_rows_in_clean": 0},
     }
 
     for f in files:
@@ -418,6 +585,7 @@ def main() -> None:
             "n_rows": 0,
             "n_clean_rows": 0,
             "n_bad_rows": 0,
+            "n_warning_rows_in_clean": 0,
             "invalid_counts": {},
             "warning_counts": {},
             "columns_missing": [],
@@ -430,24 +598,30 @@ def main() -> None:
 
         parquet_file = pq.ParquetFile(f)
 
-        # ✅ leer solo columnas necesarias
+        # Leer columnas esperadas si existen y mantener extras fuera.
+        # Como luego estandarizamos y añadimos faltantes, esto es suficiente.
         schema_cols = set(parquet_file.schema.names)
         cols_to_read = [c for c in EXPECTED_COLUMNS if c in schema_cols]
 
         with console.status(f"[cyan]Validando {f.name} (batch_size={args.batch_size})..."):
             for i, batch in enumerate(parquet_file.iter_batches(batch_size=args.batch_size, columns=cols_to_read), start=1):
-                # ✅ to_pandas optimizado RAM
                 df_batch = batch.to_pandas(
                     self_destruct=True,
                     split_blocks=True,
                     strings_to_categorical=True,
                 )
 
-                res = validate_fhvhv_df(df_batch, strict_columns=args.strict_columns)
+                res = validate_fhvhv_df(
+                    df_batch,
+                    strict_columns=args.strict_columns,
+                    source_file=f,
+                    valid_location_ids=valid_location_ids,
+                )
 
                 file_totals["n_rows"] += res.report["n_rows"]
                 file_totals["n_clean_rows"] += res.report["n_clean_rows"]
                 file_totals["n_bad_rows"] += res.report["n_bad_rows"]
+                file_totals["n_warning_rows_in_clean"] += res.report["n_warning_rows_in_clean"]
 
                 _accumulate_counts(file_totals["invalid_counts"], res.report.get("invalid_counts", {}))
                 _accumulate_counts(file_totals["warning_counts"], res.report.get("warning_counts", {}))
@@ -475,7 +649,6 @@ def main() -> None:
                     tb = pa.Table.from_pandas(res.df_bad, preserve_index=False)
                     bad_writer.write_table(tb)
 
-                # ✅ liberar memoria del batch
                 del df_batch, res, batch
                 if args.gc_every and args.gc_every > 0 and (i % args.gc_every == 0):
                     gc.collect()
@@ -489,6 +662,7 @@ def main() -> None:
             "n_rows": int(file_totals["n_rows"]),
             "n_clean_rows": int(file_totals["n_clean_rows"]),
             "n_bad_rows": int(file_totals["n_bad_rows"]),
+            "n_warning_rows_in_clean": int(file_totals["n_warning_rows_in_clean"]),
             "invalid_counts": file_totals["invalid_counts"],
             "warning_counts": file_totals["warning_counts"],
             "columns_missing": file_totals["columns_missing"],
@@ -503,6 +677,7 @@ def main() -> None:
             str(file_report["n_rows"]),
             str(file_report["n_clean_rows"]),
             str(file_report["n_bad_rows"]),
+            str(file_report["n_warning_rows_in_clean"]),
         )
 
         entry = {"file": str(f), **file_report}
@@ -510,6 +685,7 @@ def main() -> None:
         summary["totals"]["n_rows"] += file_report["n_rows"]
         summary["totals"]["n_clean_rows"] += file_report["n_clean_rows"]
         summary["totals"]["n_bad_rows"] += file_report["n_bad_rows"]
+        summary["totals"]["n_warning_rows_in_clean"] += file_report["n_warning_rows_in_clean"]
 
     console.print(table)
 
@@ -520,7 +696,8 @@ def main() -> None:
 
     console.print(f"\n[bold green]OK[/bold green] Resumen global: {summary_path}")
     console.print(
-        f"[green]Totales[/green] rows={summary['totals']['n_rows']} | clean={summary['totals']['n_clean_rows']} | bad={summary['totals']['n_bad_rows']}"
+        f"[green]Totales[/green] rows={summary['totals']['n_rows']} | clean={summary['totals']['n_clean_rows']} | "
+        f"bad={summary['totals']['n_bad_rows']} | warn(clean)={summary['totals']['n_warning_rows_in_clean']}"
     )
     console.print(f"[green]Salida datos[/green] {output_dir}/clean (y bad_rows si activado)")
 
