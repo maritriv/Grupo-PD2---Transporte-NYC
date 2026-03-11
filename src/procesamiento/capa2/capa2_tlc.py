@@ -31,8 +31,7 @@ def _list_parquets(folder: Path) -> list[Path]:
 
 def iter_validated_tlc_files(
     validated_base: Path,
-    #    services: Iterable[str] = ("yellow", "green", "fhv", "fhvhv"), 
-    services: Iterable[str] = ("green", ""), 
+    services: Iterable[str] = ("yellow", "green", "fhv", "fhvhv"), 
     clean_subdir: str = "clean",
 ) -> Iterator[Tuple[str, Path]]:
     """
