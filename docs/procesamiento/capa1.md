@@ -1,307 +1,621 @@
 # Capa 1 — Validación inicial (Green, FHV, Yellow & FHVHV)
 
 ## Objetivo de la Capa 1
-La **Capa 1** es una capa previa a la Capa 2 cuyo objetivo es realizar un **control de calidad estructural** sobre los datos en bruto (raw), usando como referencia los **Data Dictionaries oficiales de TLC**.
+
+La **Capa 1** es una capa previa a la **Capa 2** cuyo objetivo es realizar un **control de calidad estructural y de plausibilidad fuerte** sobre los datos en bruto (*raw*), usando como referencia los **Data Dictionaries oficiales de TLC** y reglas mínimas de coherencia **temporal, espacial y numérica**.
 
 Esta capa se centra en:
-- Validar **tipos** (fechas, numéricos, enteros) y convertirlos a un esquema consistente.
-- Validar **dominios/códigos** cuando el diccionario define valores permitidos (p. ej. `VendorID`, `RatecodeID`, etc.).
-- Detectar errores críticos de coherencia temporal (`dropoff < pickup`).
-- Separar datos en:
-  - **clean**: registros que pasan las validaciones.
-  - **bad_rows** (opcional): registros que fallan validaciones críticas.
-- Generar **reports** en JSON con contadores de errores/avisos por regla.
 
-> Nota: La Capa 1 **no** aplica (por defecto) limpieza de outliers de negocio (distancias extremadamente altas, importes anómalos, etc.). Eso se puede añadir más adelante si hace falta (Capa 2 o reglas extra en Capa 1).
+* Validar **tipos** (fechas, numéricos, enteros) y convertirlos a un esquema consistente.
+* Validar **dominios/códigos** cuando el diccionario define valores permitidos.
+* Detectar **errores críticos de coherencia temporal** (`dropoff < pickup`).
+* Detectar **registros implausibles pero defendibles como erróneos**, por ejemplo:
+
+  * fechas futuras
+  * pickup fuera del mes esperado del fichero
+  * duración imposible
+  * velocidad implícita físicamente inverosímil
+  * IDs de zona inexistentes (si se aporta catálogo TLC)
+
+Separar datos en:
+
+* **clean**: registros que pasan las validaciones críticas.
+* **bad_rows** *(opcional)*: registros que fallan validaciones críticas.
+
+Generar **reports en JSON** con contadores de errores y avisos por regla.
+
+Añadir **trazabilidad**:
+
+* `warning_reasons` en **clean**
+* `rejection_reasons` en **bad_rows**
+
+> **Nota:** La Capa 1 ya no se limita solo a validación estructural pura.
+> En **Yellow, Green y FHVHV** incorpora también **reglas de plausibilidad fuerte**.
+> Aun así, **no elimina automáticamente todos los outliers**: los casos raros pero no demostrablemente falsos se conservan como *warnings*.
 
 ---
 
-## Ubicación de scripts
-- `src/procesamiento/capa1/capa1_green.py`
-- `src/procesamiento/capa1/capa1_fhv.py`
-- `src/procesamiento/capa1/capa1_yellow.py`
-- `src/procesamiento/capa1/capa1_fhvhv.py`
+# Ubicación de scripts
+
+```
+src/procesamiento/capa1/capa1_green.py
+src/procesamiento/capa1/capa1_fhv.py
+src/procesamiento/capa1/capa1_yellow.py
+src/procesamiento/capa1/capa1_fhvhv.py
+```
 
 ---
 
-## Estructura de salida
+# Estructura de salida
+
 Por defecto se escribe en:
 
-- **Green**
-  - `data/validated/green/clean/`
-  - `data/validated/green/bad_rows/` (si se activa)
-  - `data/validated/green/reports/`
+## Green
 
-- **FHV**
-  - `data/validated/fhv/clean/`
-  - `data/validated/fhv/bad_rows/` (si se activa)
-  - `data/validated/fhv/geo_ready/` (si se activa)
-  - `data/validated/fhv/reports/`
+```
+data/validated/green/clean/
+data/validated/green/bad_rows/ (si se activa)
+data/validated/green/reports/
+```
 
-- **Yellow**
-  - `data/validated/yellow/clean/`
-  - `data/validated/yellow/bad_rows/` (si se activa)
-  - `data/validated/yellow/reports/`
+## FHV
 
-- **FHVHV (HVFHS)**
-  - `data/validated/fhvhv/clean/`
-  - `data/validated/fhvhv/bad_rows/` (si se activa)
-  - `data/validated/fhvhv/reports/`
+```
+data/validated/fhv/clean/
+data/validated/fhv/bad_rows/ (si se activa)
+data/validated/fhv/geo_ready/ (si se activa)
+data/validated/fhv/reports/
+```
+
+## Yellow
+
+```
+data/validated/yellow/clean/
+data/validated/yellow/bad_rows/ (si se activa)
+data/validated/yellow/reports/
+```
+
+## FHVHV (HVFHS)
+
+```
+data/validated/fhvhv/clean/
+data/validated/fhvhv/bad_rows/ (si se activa)
+data/validated/fhvhv/reports/
+```
 
 Además, se genera un resumen global:
-- `outputs/procesamiento/capa1_green/...json`
-- `outputs/procesamiento/capa1_fhv/capa1_fhv_validation_summary.json`
-- `outputs/procesamiento/capa1_yellow/...json`
-- `outputs/procesamiento/capa1_fhvhv/capa1_fhvhv_validation_summary.json`
+
+```
+outputs/procesamiento/capa1_green/capa1_green_validation_summary.json
+outputs/procesamiento/capa1_fhv/capa1_fhv_validation_summary.json
+outputs/procesamiento/capa1_yellow/capa1_yellow_validation_summary.json
+outputs/procesamiento/capa1_fhvhv/capa1_fhvhv_validation_summary.json
+```
 
 ---
 
 # 1) Capa 1 — GREEN (LPEP)
 
 ## Entrada esperada
+
 Parquets en:
-- `data/raw/green/green_tripdata_YYYY-MM.parquet`
+
+```
+data/raw/green/green_tripdata_YYYY-MM.parquet
+```
 
 ## Qué valida (Green)
-Validación columna a columna basada en el Data Dictionary de **Green Trip Records (LPEP)**:
+
+Validación columna a columna basada en el **Data Dictionary de Green Trip Records (LPEP)**, ampliada con reglas de plausibilidad fuerte.
+
+### Estandarización de columnas
+
+* Renombrado a nombres canónicos **case-insensitive**
+* Se aceptan **aliases históricos**
+* Si falta una columna esperada → se crea como **NA**
+* `cbd_congestion_fee` se trata como **opcional**
 
 ### Tipos / casts
-- `lpep_pickup_datetime`, `lpep_dropoff_datetime` → `datetime`
-- IDs y contadores → enteros nullable (`Int64`)
-  - `VendorID`, `RatecodeID`, `PULocationID`, `DOLocationID`, `passenger_count`, `payment_type`, `trip_type`
-- Importes / medidas → `float`
-  - `trip_distance`, `fare_amount`, `extra`, `mta_tax`, `tip_amount`, `tolls_amount`,
-    `improvement_surcharge`, `total_amount`, `congestion_surcharge`, `cbd_congestion_fee`
 
-### Dominios (según diccionario TLC)
-- `VendorID` permitido: `{1, 2, 6}`
-- `RatecodeID` permitido: `{1, 2, 3, 4, 5, 6, 99}`
-- `payment_type` permitido: `{0, 1, 2, 3, 4, 5, 6}`
-- `trip_type` permitido: `{1, 2}`
-- `store_and_fwd_flag` permitido: `{"Y", "N"}` (normalizado a mayúsculas)
+**Datetimes**
 
-### Coherencia temporal
-- Se marca como inválido si:  
-  `lpep_dropoff_datetime < lpep_pickup_datetime`
+```
+lpep_pickup_datetime
+lpep_dropoff_datetime
+```
 
-### Consideración sobre `cbd_congestion_fee`
-- El campo puede existir pero venir vacío en años anteriores a 2025.
-- Se trata como columna **opcional** (si falta, se crea como NA para mantener esquema).
+**Enteros nullable (Int64)**
 
-## Cómo ejecutar
-Procesar todo lo que haya en `data/raw/green/`:
+```
+VendorID
+RatecodeID
+PULocationID
+DOLocationID
+passenger_count
+payment_type
+trip_type
+```
 
-```bash
+**Float64**
+
+```
+trip_distance
+fare_amount
+extra
+mta_tax
+tip_amount
+tolls_amount
+improvement_surcharge
+total_amount
+congestion_surcharge
+cbd_congestion_fee
+```
+
+### Dominios (según TLC)
+
+```
+VendorID → {1,2,6}
+RatecodeID → {1,2,3,4,5,6,99}
+payment_type → {0,1,2,3,4,5,6}
+trip_type → {1,2}
+store_and_fwd_flag → {Y,N}
+```
+
+### Reglas temporales críticas
+
+Invalid si:
+
+* datetime inválido
+* `dropoff < pickup`
+* fechas futuras
+* pickup fuera del mes esperado
+* dropoff demasiado más allá del mes esperado
+
+### Duración y velocidad implícita
+
+Se calculan:
+
+```
+trip_duration_min
+implied_speed_mph
+```
+
+Invalid si:
+
+* duración negativa
+* duración > 360 min
+* velocidad > 100 mph
+
+### Reglas numéricas
+
+Invalid si:
+
+```
+trip_distance < 0
+mta_tax < 0
+improvement_surcharge < 0
+congestion_surcharge < 0
+cbd_congestion_fee < 0
+```
+
+### Location IDs
+
+* validación como **Int64**
+* opcional contra catálogo TLC (`--taxi-zones-csv`)
+
+### Warnings
+
+* `passenger_count = 0`
+* `trip_distance = 0`
+* `trip_duration = 0`
+* `store_and_fwd_flag` missing
+* `fare_amount` extremo
+* `total_amount` extremo
+* discrepancia componentes vs total
+
+### Duplicados
+
+Duplicados exactos → **invalid**
+
+### Trazabilidad
+
+* `warning_reasons` en **clean**
+* `rejection_reasons` en **bad_rows**
+
+### Cómo ejecutar
+
+Procesar todo:
+
+```
 uv run python -m src.procesamiento.capa1.capa1_green --write-bad
+```
+
+Meses concretos:
+
+```
+uv run python -m src.procesamiento.capa1.capa1_green \
+--months 2024-01 2024-02 \
+--write-bad \
+--taxi-zones-csv data/raw/taxi_zone_lookup.csv
 ```
 
 ---
 
 # 2) Capa 1 — FHV
 
-## Entrada esperada
-Parquets en:
-- `data/raw/fhv/fhv_tripdata_YYYY-MM.parquet`
+## Entrada
 
-> Nota: El dataset FHV **no contiene campos de tarifa/precio** como taxis, por lo que la validación se centra en tiempo, localización y metadatos del viaje.
+```
+data/raw/fhv/fhv_tripdata_YYYY-MM.parquet
+```
 
----
+Este dataset **no contiene variables de tarifa**.
 
-## Qué valida (FHV)
+### Estandarización de columnas
 
-### Estandarización de nombres de columnas
-En FHV pueden variar mayúsculas/minúsculas (`dropOff_datetime` vs `dropoff_datetime`, etc.).  
-La Capa 1 renombra columnas automáticamente a los nombres canónicos:
+Se normalizan nombres:
 
-- `dispatching_base_num`
-- `pickup_datetime`
-- `dropOff_datetime`
-- `PUlocationID`
-- `DOlocationID`
-- `SR_Flag`
-- `Affiliated_base_number`
+```
+dispatching_base_num
+pickup_datetime
+dropOff_datetime
+PUlocationID
+DOlocationID
+SR_Flag
+Affiliated_base_number
+```
 
-Esto evita errores por diferencias de capitalización entre ficheros/meses.
+### Validaciones críticas
 
----
+**Timestamps**
 
-### Validaciones críticas (invalid → van a bad_rows)
-Estas validaciones determinan si una fila entra en `clean` o se descarta como `bad_rows`:
+* no nulos
+* parseables a datetime
 
-#### 1) Timestamps
-- `pickup_datetime` y `dropOff_datetime`:
-  - deben existir (no nulos)
-  - deben parsear correctamente a `datetime`
+**Coherencia temporal**
 
-#### 2) Coherencia temporal
-- Se marca como inválido si:
-  - `dropOff_datetime < pickup_datetime`
+```
+dropOff_datetime < pickup_datetime → invalid
+```
 
-#### 3) Location IDs (tipo)
-- `PUlocationID` y `DOlocationID`:
-  - se castean a entero nullable (`Int64`)
-  - se consideran **inválidos** si el valor:
-    - no es numérico, o
-    - trae decimales (ej. `123.5`)
+**Location IDs**
 
-> Importante: **por defecto no se considera inválido** que falten `PUlocationID` o `DOlocationID`, porque en FHV muchos registros vienen sin LocationID. En ese caso se registran como *warning*.
+* casteo a **Int64**
+* no numérico → invalid
 
----
+### Warnings
 
-### Warnings (no eliminan filas)
-Se reportan en `warning_counts`, pero **no expulsan filas** del dataset `clean`:
-
-- `PUlocationID` missing (por defecto)
-- `DOlocationID` missing (por defecto)
-- formato no estándar de:
-  - `dispatching_base_num`
-  - `Affiliated_base_number`  
-  (patrón típico TLC: `B00013`)
-- `SR_Flag` fuera de dominio (se espera `NULL` o `1`)
+* `PUlocationID` missing
+* `DOlocationID` missing
+* formato extraño en bases
+* `SR_Flag` fuera de dominio
 
 ---
 
-## `geo_ready` (MUY IMPORTANTE)
+## geo_ready (MUY IMPORTANTE)
 
-### ¿Qué es?
-`geo_ready` es un subconjunto de `clean` que contiene únicamente filas con:
+Subconjunto de **clean** con:
 
-- `PUlocationID` **no nulo**
-- `DOlocationID` **no nulo**
+```
+PUlocationID != NULL
+DOlocationID != NULL
+```
 
-### ¿Por qué es importante?
-Solo con `PUlocationID`/`DOlocationID` se puede:
-- unir con el **Taxi Zone Lookup**
-- asignar **zona / borough**
-- generar agregaciones espaciales (por borough/zona)
+Permite:
 
-En la práctica, muchos registros FHV no traen LocationID, por eso `geo_ready` suele ser bastante más pequeño que `clean`.
+* unir con **Taxi Zone Lookup**
+* agregar por **zona / borough**
 
-### Cuándo usar `clean` vs `geo_ready`
-- Si el análisis es **temporal** (viajes por hora/día, estacionalidad) → usar `clean`
-- Si el análisis requiere **geografía** (por borough/zona) → usar `geo_ready`
+### Cuándo usar
 
----
+**Temporal →** `clean`
+**Espacial →** `geo_ready`
 
-## Cómo ejecutar (FHV)
+### Ejecución
 
-### Modo recomendado (no sangra y permite geo_ready)
-Genera `clean` casi completo y opcionalmente `geo_ready`:
-
-```bash
-uv run python -m src.procesamiento.capa1.capa1_fhv --months 2023-01 2025-10 --write-geo-ready
+```
+uv run python -m src.procesamiento.capa1.capa1_fhv \
+--months 2023-01 2025-10 \
+--write-geo-ready
 ```
 
 ---
 
 # 3) Capa 1 — YELLOW (TPEP)
 
-## Entrada esperada
-Parquets en:
-- `data/raw/yellow/yellow_tripdata_YYYY-MM.parquet`
+## Entrada
 
-## Qué valida (Yellow)
-Validación columna a columna basada en el Data Dictionary de **Yellow Trip Records (TPEP)**.  
-La lógica es equivalente a Green, pero usando los nombres de columnas propios de Yellow.
+```
+data/raw/yellow/yellow_tripdata_YYYY-MM.parquet
+```
 
-### Tipos / casts
-- `tpep_pickup_datetime`, `tpep_dropoff_datetime` → `datetime`
-- IDs y contadores → enteros nullable (`Int64`)
-  - `VendorID`, `RatecodeID`, `PULocationID`, `DOLocationID`, `passenger_count`, `payment_type`
-- Importes / medidas → `float`
-  - `trip_distance`, `fare_amount`, `extra`, `mta_tax`, `tip_amount`, `tolls_amount`,
-    `improvement_surcharge`, `total_amount`, `congestion_surcharge`, `airport_fee`, `cbd_congestion_fee`
+### Tipos
 
-### Dominios (según diccionario TLC)
-- `VendorID` permitido: `{1, 2, 6}`
-- `RatecodeID` permitido: `{1, 2, 3, 4, 5, 6, 99}`
-- `payment_type` permitido: `{0, 1, 2, 3, 4, 5, 6}`
-- `store_and_fwd_flag` permitido: `{"Y", "N"}` (normalizado a mayúsculas)
+Datetimes:
 
-### Coherencia temporal
-- Se marca como inválido si:  
-  `tpep_dropoff_datetime < tpep_pickup_datetime`
+```
+tpep_pickup_datetime
+tpep_dropoff_datetime
+```
 
-### Consideración sobre `cbd_congestion_fee`
-- El campo puede existir pero venir vacío en años anteriores a 2025.
-- Se trata como columna **opcional** (si falta, se crea como NA para mantener esquema).
+Enteros:
 
-## Cómo ejecutar (Yellow)
-Procesar todo lo que haya en `data/raw/yellow/`:
+```
+VendorID
+RatecodeID
+PULocationID
+DOLocationID
+passenger_count
+payment_type
+```
 
-```bash
+Float64:
+
+```
+trip_distance
+fare_amount
+extra
+mta_tax
+tip_amount
+tolls_amount
+improvement_surcharge
+total_amount
+congestion_surcharge
+airport_fee
+cbd_congestion_fee
+```
+
+### Dominios
+
+```
+VendorID → {1,2,6,7}
+RatecodeID → {1,2,3,4,5,6,99}
+payment_type → {0..6}
+store_and_fwd_flag → {Y,N}
+```
+
+### Reglas críticas
+
+Invalid si:
+
+* datetime inválido
+* `dropoff < pickup`
+* fechas futuras
+* pickup fuera del mes
+* dropoff demasiado lejos
+
+### Velocidad / duración
+
+Invalid si:
+
+```
+duración > 360 min
+velocidad > 100 mph
+```
+
+### Numéricas
+
+Invalid si:
+
+```
+trip_distance < 0
+mta_tax < 0
+improvement_surcharge < 0
+congestion_surcharge < 0
+airport_fee < 0
+cbd_congestion_fee < 0
+```
+
+### Warnings
+
+* `passenger_count = 0`
+* `trip_distance = 0`
+* `trip_duration = 0`
+* flag missing
+* fares extremos
+
+### Ejecución
+
+```
 uv run python -m src.procesamiento.capa1.capa1_yellow --write-bad
 ```
 
-Procesar meses concretos:
+Mes concreto:
 
-```bash
-uv run python -m src.procesamiento.capa1.capa1_yellow --months 2025-04 --write-bad
+```
+uv run python -m src.procesamiento.capa1.capa1_yellow \
+--months 2025-04 \
+--write-bad
+```
+
+Con zonas:
+
+```
+uv run python -m src.procesamiento.capa1.capa1_yellow \
+--months 2025-04 \
+--write-bad \
+--taxi-zones-csv data/raw/taxi_zone_lookup.csv
 ```
 
 ---
 
 # 4) Capa 1 — FHVHV (HVFHS)
 
-## Entrada esperada
-Parquets en:
-- `data/raw/fhvhv/fhvhv_tripdata_YYYY-MM.parquet`
+## Entrada
 
-## Qué valida (FHVHV)
-Validación estructural basada en el Data Dictionary de **High Volume FHV (HVFHS)**.  
-A diferencia de FHV, este dataset incluye variables de tarifa (p. ej. `base_passenger_fare`, `tips`, `driver_pay`) y flags de servicio.
-
-### Tipos / casts
-- Datetimes → `datetime`
-  - `request_datetime`, `on_scene_datetime`, `pickup_datetime`, `dropoff_datetime`
-- Location IDs y tiempos → enteros nullable (`Int64`)
-  - `PULocationID`, `DOLocationID`, `trip_time`
-- Distancias e importes → `float`
-  - `trip_miles`, `base_passenger_fare`, `tolls`, `bcf`, `sales_tax`, `congestion_surcharge`,
-    `airport_fee`, `tips`, `driver_pay`, `cbd_congestion_fee`
-
-### Dominios / formatos
-- `hvfhs_license_num`: formato `HVdddd` (ej. `HV0003`)
-  - formato inválido → invalid (bad_rows)
-  - código fuera del set conocido `{HV0002, HV0003, HV0004, HV0005}` → warning (pueden aparecer nuevos)
-- `dispatching_base_num` y `originating_base_num`:
-  - se validan con patrón típico TLC (ej. `B00013`)
-  - missing o formato no estándar → warning
-- Flags (`Y/N`):
-  - `shared_request_flag`, `shared_match_flag`, `access_a_ride_flag`, `wav_request_flag`, `wav_match_flag`
-  - missing → warning
-  - valor fuera de `{Y, N}` → invalid (bad_rows)
-
-### Coherencia temporal
-- Se marca como inválido si:  
-  `dropoff_datetime < pickup_datetime`
-
-Además, se registran warnings (no eliminan filas) si:
-- `request_datetime > pickup_datetime`
-- `on_scene_datetime > pickup_datetime`
-- `on_scene_datetime < request_datetime`
-
-### Reglas adicionales
-- `trip_time < 0` → invalid (bad_rows)
-- `trip_miles < 0` → invalid (bad_rows)
-- importes negativos (ajustes/refunds) → warning
-- `cbd_congestion_fee` puede estar vacío antes de 2025 → warning (no invalid)
-
-## Ejecución optimizada (batches)
-Los ficheros FHVHV suelen ser muy grandes. Para evitar cargar un mes completo en memoria:
-- Se procesa en streaming por batches (`--batch-size`).
-- Se leen solo las columnas necesarias del parquet (según `EXPECTED_COLUMNS`).
-- Se escribe con `ParquetWriter` (evita concatenaciones grandes en memoria).
-
-## Cómo ejecutar (FHVHV)
-Procesar un mes con batch controlado:
-
-```bash
-uv run python -m src.procesamiento.capa1.capa1_fhvhv --months 2024-02 --batch-size 200000
+```
+data/raw/fhvhv/fhvhv_tripdata_YYYY-MM.parquet
 ```
 
-Si se quieren guardar `bad_rows`:
+### Datetimes
 
-```bash
-uv run python -m src.procesamiento.capa1.capa1_fhvhv --months 2024-02 --batch-size 200000 --write-bad
 ```
+request_datetime
+on_scene_datetime
+pickup_datetime
+dropoff_datetime
+```
+
+### Enteros
+
+```
+PULocationID
+DOLocationID
+trip_time
+```
+
+### Float64
+
+```
+trip_miles
+base_passenger_fare
+tolls
+bcf
+sales_tax
+congestion_surcharge
+airport_fee
+tips
+driver_pay
+cbd_congestion_fee
+```
+
+### Dominios
+
+`hvfhs_license_num`
+
+```
+HVdddd
+```
+
+inválido → **invalid**
+
+```
+HV0002 HV0003 HV0004 HV0005
+```
+
+otros → **warning**
+
+### Flags
+
+```
+shared_request_flag
+shared_match_flag
+access_a_ride_flag
+wav_request_flag
+wav_match_flag
+```
+
+missing → warning
+valor ≠ {Y,N} → invalid
+
+### Reglas temporales
+
+Invalid:
+
+```
+dropoff < pickup
+pickup futuro
+dropoff futuro
+pickup fuera del mes
+```
+
+Warnings:
+
+```
+request_datetime inválido
+on_scene_datetime inválido
+request > pickup
+on_scene > pickup
+```
+
+### Duración y velocidad
+
+Invalid:
+
+```
+duración negativa
+duración > 360 min
+velocidad > 100 mph
+```
+
+### Numéricas
+
+Invalid:
+
+```
+trip_time < 0
+trip_miles < 0
+```
+
+Warnings:
+
+```
+importes negativos
+driver_pay extremo
+fare extremo
+```
+
+### Duplicados
+
+Duplicados exactos en batch → **invalid**
+
+### Procesamiento por batches
+
+Para evitar problemas de memoria:
+
+* streaming por batches (`--batch-size`)
+* lectura selectiva de columnas
+* escritura incremental
+* `gc.collect()`
+
+### Ejecución
+
+```
+uv run python -m src.procesamiento.capa1.capa1_fhvhv \
+--months 2024-02 \
+--batch-size 200000
+```
+
+Con bad_rows:
+
+```
+uv run python -m src.procesamiento.capa1.capa1_fhvhv \
+--months 2024-02 \
+--batch-size 200000 \
+--write-bad
+```
+
+Con validación de zonas:
+
+```
+uv run python -m src.procesamiento.capa1.capa1_fhvhv \
+--months 2024-02 \
+--batch-size 200000 \
+--write-bad \
+--taxi-zones-csv data/raw/taxi_zone_lookup.csv
+```
+
+---
+
+# Resumen metodológico actual
+
+En el estado actual del proyecto:
+
+**Yellow, Green y FHVHV** usan una **Capa 1 ampliada** que combina:
+
+* validación estructural
+* validación de dominios
+* plausibilidad temporal
+* plausibilidad numérica fuerte
+* warnings para anomalías no concluyentes
+* trazabilidad por fila
+
+**FHV** mantiene de momento una validación más básica centrada en:
+
+* timestamps
+* LocationIDs
+* base numbers
+* SR_Flag
+* subconjunto `geo_ready`
+
+La idea general es que **Capa 1 elimine lo objetivamente inválido o implausible**, mientras que los **casos raros pero no demostrablemente falsos se mantengan como warnings** para evitar **sobrelimpiar el dataset**.
