@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import math
 import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import Dict, Iterable, Iterator, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -21,15 +22,54 @@ except Exception:
 
 DEBUG = False
 
+NEEDED_COLS = ["date", "hour", "service_type", "pu_location_id", "total_amount_std"]
+
 
 # -----------------------------------------------------------------------------
-# Entrada: iterar parquets de capa 2 (sin asumir un único fichero)
+# Entrada: iterar parquets de capa 2 agrupados por year/month
 # -----------------------------------------------------------------------------
-def iter_parquet_files(base: Path) -> Iterator[Path]:
+def iter_month_partitions(base: Path) -> Iterator[Tuple[int, int, List[Path]]]:
+    """
+    Busca parquets en una estructura tipo:
+      data/standarized/service_type=.../year=YYYY/month=MM/*.parquet
+
+    Devuelve:
+      (year, month, [lista de parquets de ese mes de todos los servicios])
+    """
     base = Path(base).resolve()
     if not base.exists():
         raise FileNotFoundError(f"No existe: {base}")
-    yield from (p for p in base.rglob("*.parquet") if p.is_file())
+
+    month_map: Dict[Tuple[int, int], List[Path]] = {}
+
+    for fp in base.rglob("*.parquet"):
+        if not fp.is_file():
+            continue
+
+        year = None
+        month = None
+
+        for part in fp.parts:
+            if part.startswith("year="):
+                try:
+                    year = int(part.split("=", 1)[1])
+                except Exception:
+                    year = None
+            elif part.startswith("month="):
+                try:
+                    month = int(part.split("=", 1)[1])
+                except Exception:
+                    month = None
+
+        if year is None or month is None:
+            # Si algún parquet no sigue la estructura esperada, lo ignoramos.
+            # Así evitamos mezclar cosas raras.
+            continue
+
+        month_map.setdefault((year, month), []).append(fp)
+
+    for (year, month) in sorted(month_map.keys()):
+        yield year, month, sorted(month_map[(year, month)])
 
 
 # -----------------------------------------------------------------------------
@@ -99,7 +139,6 @@ def write_partitioned_dataset(df: pd.DataFrame, out_dir: Path, partition_cols: I
 
     part_cols = list(partition_cols)
 
-    # Para igualar Spark partitionBy(date), usamos YYYY-MM-DD en la carpeta
     if "date" in part_cols and "date" in df.columns:
         df = df.copy()
         df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
@@ -126,12 +165,11 @@ def normalize_and_filter(
     max_date: str,
     cap_max_price: float,
 ) -> pd.DataFrame:
-    need_cols = ["date", "hour", "service_type", "pu_location_id", "total_amount_std"]
-    for c in need_cols:
+    for c in NEEDED_COLS:
         if c not in df.columns:
             raise ValueError(f"Falta columna requerida: {c}")
 
-    out = df[need_cols].copy()
+    out = df[NEEDED_COLS].copy()
 
     out["date"] = pd.to_datetime(out["date"], errors="coerce")
     out["hour"] = pd.to_numeric(out["hour"], errors="coerce").astype("Int64")
@@ -146,92 +184,21 @@ def normalize_and_filter(
     out = out[(out["date"] >= dmin) & (out["date"] <= dmax)]
 
     out = out[(out["hour"] >= 0) & (out["hour"] <= 23)]
-
     out = out[(out["total_amount_std"] > 0) & (out["total_amount_std"] < float(cap_max_price))]
 
-    # Spark usa date (tipo date). Aquí lo dejamos como datetime (luego se formatea al guardar).
     return out
 
 
 # -----------------------------------------------------------------------------
-# Construcción CAPA 3 (mismas 4 salidas)
+# Helpers para convertir acumuladores mensuales en DataFrames
 # -----------------------------------------------------------------------------
-def build_layer3_streaming(
-    layer2_path: Path,
-    min_date: str,
-    max_date: str,
-    cap_max_price: float,
-    min_trips_df2: int,
-    min_trips_df3: int,
-    reservoir_k: int = 2000,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    daily_stats: Dict[Tuple[pd.Timestamp, str], RunningStats] = {}
-    daily_zones: Dict[Tuple[pd.Timestamp, str], set] = {}
-
-    zhd_global: Dict[Tuple[int, int, pd.Timestamp], RunningStats] = {}
-    zhd_service: Dict[Tuple[int, int, pd.Timestamp, str], RunningStats] = {}
-
-    var_stats: Dict[Tuple[int, int, str], Tuple[RunningStats, Reservoir]] = {}
-
-    files = list(iter_parquet_files(layer2_path))
-    if not files:
-        raise FileNotFoundError(f"No hay parquets dentro de {layer2_path}")
-
-    print(f"[INFO] Leyendo {len(files)} parquets de Capa 2 (streaming)...")
-
-    for fp in files:
-        df_raw = pd.read_parquet(fp)
-        df = normalize_and_filter(df_raw, min_date=min_date, max_date=max_date, cap_max_price=cap_max_price)
-
-        if df.empty:
-            continue
-
-        # DF1: date + service_type
-        for (d, svc), g in df.groupby(["date", "service_type"]):
-            key = (d, svc)
-            st = daily_stats.get(key)
-            if st is None:
-                st = RunningStats()
-                daily_stats[key] = st
-                daily_zones[key] = set()
-            x = g["total_amount_std"].to_numpy(dtype=float, copy=False)
-            st.add(x)
-            daily_zones[key].update(g["pu_location_id"].astype(int).unique().tolist())
-
-        # DF2a: pu_location_id + hour + date
-        for (z, h, d), g in df.groupby(["pu_location_id", "hour", "date"]):
-            key = (int(z), int(h), d)
-            st = zhd_global.get(key)
-            if st is None:
-                st = RunningStats()
-                zhd_global[key] = st
-            st.add(g["total_amount_std"].to_numpy(dtype=float, copy=False))
-
-        # DF2b: pu_location_id + hour + date + service_type
-        for (z, h, d, svc), g in df.groupby(["pu_location_id", "hour", "date", "service_type"]):
-            key = (int(z), int(h), d, str(svc))
-            st = zhd_service.get(key)
-            if st is None:
-                st = RunningStats()
-                zhd_service[key] = st
-            st.add(g["total_amount_std"].to_numpy(dtype=float, copy=False))
-
-        # DF3: pu_location_id + hour + service_type (IQR approx como percentile_approx)
-        for (z, h, svc), g in df.groupby(["pu_location_id", "hour", "service_type"]):
-            key = (int(z), int(h), str(svc))
-            pair = var_stats.get(key)
-            if pair is None:
-                pair = (RunningStats(), Reservoir(k=reservoir_k, seed=42))
-                var_stats[key] = pair
-            st, res = pair
-            x = g["total_amount_std"].to_numpy(dtype=float, copy=False)
-            st.add(x)
-            res.add_many(x)
-
-    # ---- DF1: df_daily_service
-    rows1 = []
+def monthly_daily_service_to_df(
+    daily_stats: Dict[Tuple[pd.Timestamp, str], RunningStats],
+    daily_zones: Dict[Tuple[pd.Timestamp, str], set],
+) -> pd.DataFrame:
+    rows = []
     for (d, svc), st in daily_stats.items():
-        rows1.append(
+        rows.append(
             {
                 "date": d,
                 "service_type": svc,
@@ -241,13 +208,17 @@ def build_layer3_streaming(
                 "unique_zones": len(daily_zones[(d, svc)]),
             }
         )
-    df_daily_service = pd.DataFrame(rows1)
+    return pd.DataFrame(rows)
 
-    # ---- DF2a: df_zone_hour_day_global
-    rows2a = []
+
+def monthly_zone_hour_day_global_to_df(
+    zhd_global: Dict[Tuple[int, int, pd.Timestamp], RunningStats],
+    min_trips_df2: int,
+) -> pd.DataFrame:
+    rows = []
     for (z, h, d), st in zhd_global.items():
         if st.n >= min_trips_df2:
-            rows2a.append(
+            rows.append(
                 {
                     "pu_location_id": z,
                     "hour": h,
@@ -257,13 +228,17 @@ def build_layer3_streaming(
                     "std_price": st.std_sample(),
                 }
             )
-    df_zone_hour_day_global = pd.DataFrame(rows2a)
+    return pd.DataFrame(rows)
 
-    # ---- DF2b: df_zone_hour_day_service
-    rows2b = []
+
+def monthly_zone_hour_day_service_to_df(
+    zhd_service: Dict[Tuple[int, int, pd.Timestamp, str], RunningStats],
+    min_trips_df2: int,
+) -> pd.DataFrame:
+    rows = []
     for (z, h, d, svc), st in zhd_service.items():
         if st.n >= min_trips_df2:
-            rows2b.append(
+            rows.append(
                 {
                     "pu_location_id": z,
                     "hour": h,
@@ -274,9 +249,174 @@ def build_layer3_streaming(
                     "std_price": st.std_sample(),
                 }
             )
-    df_zone_hour_day_service = pd.DataFrame(rows2b)
+    return pd.DataFrame(rows)
 
-    # ---- DF3: df_variability
+
+def finalize_types(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    if "hour" in df.columns:
+        df["hour"] = pd.to_numeric(df["hour"], errors="coerce").astype("Int64")
+    if "pu_location_id" in df.columns:
+        df["pu_location_id"] = pd.to_numeric(df["pu_location_id"], errors="coerce").astype("Int64")
+    if "num_trips" in df.columns:
+        df["num_trips"] = pd.to_numeric(df["num_trips"], errors="coerce").astype("Int64")
+    return df
+
+
+# -----------------------------------------------------------------------------
+# Construcción CAPA 3:
+# - DF1/DF2a/DF2b por mes, guardando y liberando
+# - DF3 global
+# -----------------------------------------------------------------------------
+def build_layer3_streaming_monthly(
+    layer2_path: Path,
+    out_base: Path,
+    min_date: str,
+    max_date: str,
+    cap_max_price: float,
+    min_trips_df2: int,
+    min_trips_df3: int,
+    reservoir_k: int = 500,
+) -> pd.DataFrame:
+    month_parts = list(iter_month_partitions(layer2_path))
+    if not month_parts:
+        raise FileNotFoundError(
+            f"No hay parquets dentro de {layer2_path} con estructura year=YYYY/month=MM"
+        )
+
+    total_months = len(month_parts)
+    total_files = sum(len(files) for _, _, files in month_parts)
+    print(f"[INFO] Meses detectados: {total_months}")
+    print(f"[INFO] Parquets detectados en Capa 2: {total_files}")
+
+    # DF3 global
+    var_stats: Dict[Tuple[int, int, str], Tuple[RunningStats, Reservoir]] = {}
+
+    processed_files = 0
+
+    for mi, (year, month, files) in enumerate(month_parts, start=1):
+        print(f"\n[INFO] Procesando mes {mi}/{total_months}: {year}-{month:02d} ({len(files)} parquets)")
+
+        # Acumuladores SOLO del mes actual: se liberan al final del mes
+        daily_stats: Dict[Tuple[pd.Timestamp, str], RunningStats] = {}
+        daily_zones: Dict[Tuple[pd.Timestamp, str], set] = {}
+
+        zhd_global: Dict[Tuple[int, int, pd.Timestamp], RunningStats] = {}
+        zhd_service: Dict[Tuple[int, int, pd.Timestamp, str], RunningStats] = {}
+
+        for fi, fp in enumerate(files, start=1):
+            processed_files += 1
+
+            if fi % 25 == 0 or fi == len(files):
+                print(
+                    f"[INFO]   Mes {year}-{month:02d}: fichero {fi}/{len(files)} "
+                    f"(global {processed_files}/{total_files})"
+                )
+
+            df_raw = pd.read_parquet(fp, columns=NEEDED_COLS)
+            df = normalize_and_filter(
+                df_raw,
+                min_date=min_date,
+                max_date=max_date,
+                cap_max_price=cap_max_price,
+            )
+
+            del df_raw
+
+            if df.empty:
+                del df
+                gc.collect()
+                continue
+
+            # DF1 mensual: date + service_type
+            for (d, svc), g in df.groupby(["date", "service_type"], dropna=False):
+                key = (d, svc)
+                st = daily_stats.get(key)
+                if st is None:
+                    st = RunningStats()
+                    daily_stats[key] = st
+                    daily_zones[key] = set()
+
+                x = g["total_amount_std"].to_numpy(dtype=float, copy=False)
+                st.add(x)
+                daily_zones[key].update(g["pu_location_id"].astype(int).unique().tolist())
+
+            # DF2a mensual: pu_location_id + hour + date
+            for (z, h, d), g in df.groupby(["pu_location_id", "hour", "date"], dropna=False):
+                key = (int(z), int(h), d)
+                st = zhd_global.get(key)
+                if st is None:
+                    st = RunningStats()
+                    zhd_global[key] = st
+                st.add(g["total_amount_std"].to_numpy(dtype=float, copy=False))
+
+            # DF2b mensual: pu_location_id + hour + date + service_type
+            for (z, h, d, svc), g in df.groupby(
+                ["pu_location_id", "hour", "date", "service_type"],
+                dropna=False,
+            ):
+                key = (int(z), int(h), d, str(svc))
+                st = zhd_service.get(key)
+                if st is None:
+                    st = RunningStats()
+                    zhd_service[key] = st
+                st.add(g["total_amount_std"].to_numpy(dtype=float, copy=False))
+
+            # DF3 global: pu_location_id + hour + service_type
+            for (z, h, svc), g in df.groupby(
+                ["pu_location_id", "hour", "service_type"],
+                dropna=False,
+            ):
+                key = (int(z), int(h), str(svc))
+                pair = var_stats.get(key)
+                if pair is None:
+                    pair = (RunningStats(), Reservoir(k=reservoir_k, seed=42))
+                    var_stats[key] = pair
+
+                st, res = pair
+                x = g["total_amount_std"].to_numpy(dtype=float, copy=False)
+                st.add(x)
+                res.add_many(x)
+
+            del df
+            gc.collect()
+
+        # ---- construir y guardar SOLO lo mensual
+        df_daily_service = finalize_types(monthly_daily_service_to_df(daily_stats, daily_zones))
+        df_zone_hour_day_global = finalize_types(monthly_zone_hour_day_global_to_df(zhd_global, min_trips_df2))
+        df_zone_hour_day_service = finalize_types(monthly_zone_hour_day_service_to_df(zhd_service, min_trips_df2))
+
+        write_partitioned_dataset(
+            df_daily_service,
+            out_base / "df_daily_service",
+            partition_cols=["service_type"],
+        )
+        write_partitioned_dataset(
+            df_zone_hour_day_global,
+            out_base / "df_zone_hour_day_global",
+            partition_cols=["date"],
+        )
+        write_partitioned_dataset(
+            df_zone_hour_day_service,
+            out_base / "df_zone_hour_day_service",
+            partition_cols=["date", "service_type"],
+        )
+
+        print(
+            f"[INFO]   Guardado mes {year}-{month:02d}: "
+            f"df1={len(df_daily_service)} filas, "
+            f"df2a={len(df_zone_hour_day_global)} filas, "
+            f"df2b={len(df_zone_hour_day_service)} filas"
+        )
+
+        # liberar acumuladores mensuales
+        del daily_stats, daily_zones, zhd_global, zhd_service
+        del df_daily_service, df_zone_hour_day_global, df_zone_hour_day_service
+        gc.collect()
+
+    # ---- DF3 global final
     rows3 = []
     for (z, h, svc), (st, res) in var_stats.items():
         if st.n < min_trips_df3:
@@ -295,9 +435,9 @@ def build_layer3_streaming(
                 "biz_score_iqr": pv,
             }
         )
+
     df_variability = pd.DataFrame(rows3)
 
-    # Variantes z-score del biz_score (necesitan stats globales)
     if not df_variability.empty:
         iqr = df_variability["price_variability"].astype(float)
         log_vol = np.log1p(df_variability["num_trips"].astype(float))
@@ -311,40 +451,23 @@ def build_layer3_streaming(
         df_variability["biz_score_zsum"] = z_iqr + z_lv
         df_variability["biz_score_zproduct"] = z_iqr * z_lv
 
-    # Tipos consistentes
-    for dfx in [df_daily_service, df_zone_hour_day_global, df_zone_hour_day_service, df_variability]:
-        if not dfx.empty and "hour" in dfx.columns:
-            dfx["hour"] = pd.to_numeric(dfx["hour"], errors="coerce").astype("Int64")
-        if not dfx.empty and "pu_location_id" in dfx.columns:
-            dfx["pu_location_id"] = pd.to_numeric(dfx["pu_location_id"], errors="coerce").astype("Int64")
-        if not dfx.empty and "num_trips" in dfx.columns:
-            dfx["num_trips"] = pd.to_numeric(dfx["num_trips"], errors="coerce").astype("Int64")
+    df_variability = finalize_types(df_variability)
 
-    return df_daily_service, df_zone_hour_day_global, df_zone_hour_day_service, df_variability
+    return df_variability
 
 
 # -----------------------------------------------------------------------------
-# Guardado CAPA 3 (misma estructura que Spark partitionBy)
+# Guardado DF3 final
 # -----------------------------------------------------------------------------
-def save_layer3_spark_style(
-    df_daily_service: pd.DataFrame,
-    df_zone_hour_day_global: pd.DataFrame,
-    df_zone_hour_day_service: pd.DataFrame,
+def save_df3_only(
     df_variability: pd.DataFrame,
     out_base: Path,
-    mode: str = "overwrite",
 ) -> None:
-    out_base = Path(out_base).resolve()
-    out_base.mkdir(parents=True, exist_ok=True)
-
-    if mode == "overwrite" and out_base.exists():
-        shutil.rmtree(out_base)
-        out_base.mkdir(parents=True, exist_ok=True)
-
-    write_partitioned_dataset(df_daily_service, out_base / "df_daily_service", partition_cols=["service_type"])
-    write_partitioned_dataset(df_zone_hour_day_global, out_base / "df_zone_hour_day_global", partition_cols=["date"])
-    write_partitioned_dataset(df_zone_hour_day_service, out_base / "df_zone_hour_day_service", partition_cols=["date", "service_type"])
-    write_partitioned_dataset(df_variability, out_base / "df_variability", partition_cols=["service_type"])
+    write_partitioned_dataset(
+        df_variability,
+        out_base / "df_variability",
+        partition_cols=["service_type"],
+    )
 
     print("\nCapa 3 guardada en:", out_base)
     print(" - df_daily_service           ->", out_base / "df_daily_service")
@@ -357,7 +480,9 @@ def save_layer3_spark_style(
 # Main
 # -----------------------------------------------------------------------------
 def main() -> None:
-    p = argparse.ArgumentParser(description="Capa 3 (sin Spark): agregación y guardado particionado estilo Spark.")
+    p = argparse.ArgumentParser(
+        description="Capa 3 (sin Spark): DF1/DF2 por mes y DF3 global, guardado particionado."
+    )
     p.add_argument("--in-dir", default=str(obtener_ruta("data/standarized")), help="Ruta capa 2 (parquets)")
     p.add_argument("--out-dir", default=str(obtener_ruta("data/aggregated")), help="Salida capa 3")
     p.add_argument("--min-date", default="2019-01-01", help="YYYY-MM-DD (inclusive)")
@@ -366,31 +491,36 @@ def main() -> None:
     p.add_argument("--min-trips-df2", type=int, default=30, help="Mínimo num_trips en DF2a/DF2b (default: 30)")
     p.add_argument("--min-trips-df3", type=int, default=100, help="Mínimo num_trips en DF3 (default: 100)")
     p.add_argument("--mode", choices=["overwrite", "append"], default="overwrite", help="overwrite borra salida")
+    p.add_argument("--reservoir-k", type=int, default=500, help="Tamaño reservoir para IQR aprox (default: 500)")
     args = p.parse_args()
 
     datetime.strptime(args.min_date, "%Y-%m-%d")
     datetime.strptime(args.max_date, "%Y-%m-%d")
 
     layer2_path = Path(args.in_dir)
-    out_base = Path(args.out_dir)
+    out_base = Path(args.out_dir).resolve()
 
-    df1, df2a, df2b, df3 = build_layer3_streaming(
+    if args.mode == "overwrite" and out_base.exists():
+        print(f"[INFO] Borrando salida (overwrite): {out_base}")
+        shutil.rmtree(out_base)
+
+    out_base.mkdir(parents=True, exist_ok=True)
+
+    df3 = build_layer3_streaming_monthly(
         layer2_path=layer2_path,
+        out_base=out_base,
         min_date=args.min_date,
         max_date=args.max_date,
         cap_max_price=args.cap_max_price,
         min_trips_df2=args.min_trips_df2,
         min_trips_df3=args.min_trips_df3,
-        reservoir_k=2000,
+        reservoir_k=args.reservoir_k,
     )
 
     if DEBUG:
-        print(df1.head())
-        print(df2a.head())
-        print(df2b.head())
         print(df3.head())
 
-    save_layer3_spark_style(df1, df2a, df2b, df3, out_base=out_base, mode=args.mode)
+    save_df3_only(df3, out_base=out_base)
 
 
 if __name__ == "__main__":
