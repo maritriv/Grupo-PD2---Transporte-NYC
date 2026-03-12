@@ -6,6 +6,9 @@ import math
 from pathlib import Path
 import pandas as pd
 
+MIN_ALLOWED_DATE = pd.Timestamp("2023-01-01").date()
+MAX_ALLOWED_DATE = pd.Timestamp("2025-12-31").date()
+
 # Para generar dataset completo
 # uv run -m src.ml.a_build_dataset
 # Genera: data/ml/dataset_completo.parquet
@@ -94,6 +97,7 @@ def build_dataset(
     tlc["service_type"] = tlc["service_type"].astype(str)
 
     tlc = tlc.dropna(subset=["date", "hour", "pu_location_id", "service_type", "num_trips", "std_price"])
+    tlc = tlc[(tlc["date"] >= MIN_ALLOWED_DATE) & (tlc["date"] <= MAX_ALLOWED_DATE)]
 
     # Filtro fechas (rango)
     if date_from is not None:

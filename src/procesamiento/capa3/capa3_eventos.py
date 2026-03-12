@@ -17,6 +17,8 @@ except Exception:
         return Path(p)
 
 DEBUG = False  # True para ver previews
+MIN_YEAR = 2023
+MAX_YEAR = 2025
 
 
 # -----------------------------------------------------------------------------
@@ -110,6 +112,8 @@ def build_layer3_events(df2: pd.DataFrame, min_events_hour_day: int = 1):
     df["n_events"] = pd.to_numeric(df.get("n_events"), errors="coerce").astype("Int64")
 
     df = df.dropna(subset=["date", "hour", "borough", "event_type", "n_events"])
+    date_ts = pd.to_datetime(df["date"], errors="coerce")
+    df = df[(date_ts.dt.year >= MIN_YEAR) & (date_ts.dt.year <= MAX_YEAR)]
     df = df[(df["hour"] >= 0) & (df["hour"] <= 23)]
     df = df[df["n_events"] >= 0]
 

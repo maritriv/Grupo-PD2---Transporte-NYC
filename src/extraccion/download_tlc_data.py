@@ -37,7 +37,7 @@ HTTP_ERRORS = {
     504: "Gateway Timeout - Timeout del gateway",
 }
 
-ALL_SERVICES = ("yellow", "green", "fhv", "fhvhv")
+ALL_SERVICES = ("yellow", "green", "fhvhv")
 
 
 def build_url(service: str, year: int, month: int) -> str:
@@ -206,7 +206,7 @@ def main(
 ):
     """
     Descarga datos de NYC TLC (Taxi & Limousine Commission).
-    Si no se indica --service, descarga: yellow, green, fhv, fhvhv.
+    Si no se indica --service, descarga: yellow, green, fhvhv.
     """
     years = range(start_year, end_year + 1)
     months = range(start_month, end_month + 1)

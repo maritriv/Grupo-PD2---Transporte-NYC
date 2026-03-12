@@ -15,6 +15,8 @@ except Exception:
         return Path(p)
 
 DEBUG = False  # True para ver previews
+MIN_YEAR = 2023
+MAX_YEAR = 2025
 
 
 def read_layer2_meteo(layer2_path: Path) -> pd.DataFrame:
@@ -75,6 +77,8 @@ def build_layer3_meteo(df2: pd.DataFrame):
         df["weather_code"] = pd.to_numeric(df["weather_code"], errors="coerce").astype("Int64")
 
     df = df.dropna(subset=["date", "hour"])
+    date_ts = pd.to_datetime(df["date"], errors="coerce")
+    df = df[(date_ts.dt.year >= MIN_YEAR) & (date_ts.dt.year <= MAX_YEAR)]
     df = df[(df["hour"] >= 0) & (df["hour"] <= 23)]
 
     # 1) date+hour

@@ -16,6 +16,8 @@ except Exception:
 
 
 DEBUG = False  # True para ver previews
+MIN_YEAR = 2023
+MAX_YEAR = 2025
 
 
 def read_raw_meteo(in_dir: Path, base_name: str = "meteo_hourly_nyc") -> pd.DataFrame:
@@ -124,6 +126,8 @@ def build_layer2_meteo(df: pd.DataFrame) -> pd.DataFrame:
     dt = pd.to_datetime(df2["date"])
     df2["year"] = dt.dt.year.astype("int")
     df2["month"] = dt.dt.month.astype("int")
+    df2 = df2[(df2["year"] >= MIN_YEAR) & (df2["year"] <= MAX_YEAR)]
+    dt = pd.to_datetime(df2["date"])
     # Spark dayofweek: 1=Sunday ... 7=Saturday
     df2["day_of_week"] = ((dt.dt.dayofweek + 1) % 7) + 1
     df2["is_weekend"] = df2["day_of_week"].isin([1, 7]).astype("int")
@@ -176,7 +180,9 @@ def main():
         datetime.strptime(args.date_to, "%Y-%m-%d")
 
     project_root = Path(__file__).resolve().parents[3]
-    raw_dir = (project_root / "data" / "external" / "meteo" / "raw").resolve()
+    validated_dir = (project_root / "data" / "external" / "meteo" / "validated" / "clean").resolve()
+    fallback_raw_dir = (project_root / "data" / "external" / "meteo" / "raw").resolve()
+    raw_dir = validated_dir if validated_dir.exists() else fallback_raw_dir
     out_dir = (project_root / "data" / "external" / "meteo" / "standarized").resolve()
 
     print("[DEBUG] raw_dir:", raw_dir)

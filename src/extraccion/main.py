@@ -58,7 +58,6 @@ def download_all_services():
     services = {
         'yellow': ('Yellow Taxi', 'yellow'),
         'green': ('Green Taxi', 'green'),
-        'fhv': ('FHV', 'blue'),
         'fhvhv': ('HVFHV', 'magenta')
     }
     

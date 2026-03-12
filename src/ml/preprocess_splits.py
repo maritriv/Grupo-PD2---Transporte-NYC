@@ -1,0 +1,275 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+from typing import Dict, Tuple
+
+import numpy as np
+import pandas as pd
+
+TARGET_REG = "stress_score"
+TARGET_CLF = "is_stress"
+
+
+def _split_xy(df: pd.DataFrame, target_reg: str, target_clf: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    for c in [target_reg, target_clf]:
+        if c not in df.columns:
+            raise ValueError(f"Falta target '{c}' en dataset.")
+    y = df[[target_reg, target_clf]].copy()
+    x = df.drop(columns=[target_reg, target_clf]).copy()
+    return x, y
+
+
+def _align_columns(base_cols: list[str], df: pd.DataFrame) -> pd.DataFrame:
+    return df.reindex(columns=base_cols, fill_value=0)
+
+
+def _safe_numeric(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    for c in cols:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
+def _is_binary_series(s: pd.Series) -> bool:
+    vals = s.dropna().unique()
+    if len(vals) == 0:
+        return True
+    return set(vals).issubset({0, 1})
+
+
+def preprocess_splits(
+    splits_dir: str = "data/ml/splits",
+    prefix: str = "completo",
+    out_dir: str = "data/ml/splits_processed",
+    null_threshold: float = 0.70,
+    corr_threshold: float = 0.90,
+    onehot_max_levels: int = 20,
+    outlier_low_q: float = 0.01,
+    outlier_high_q: float = 0.99,
+) -> Dict[str, str]:
+    project_root = Path(__file__).resolve().parents[2]
+    in_base = (project_root / splits_dir).resolve()
+    out_base = (project_root / out_dir).resolve()
+    os.makedirs(out_base, exist_ok=True)
+
+    train_fp = in_base / f"{prefix}_train.parquet"
+    val_fp = in_base / f"{prefix}_val.parquet"
+    test_fp = in_base / f"{prefix}_test.parquet"
+
+    if not train_fp.exists() or not val_fp.exists() or not test_fp.exists():
+        raise FileNotFoundError(
+            "No se encontraron los splits raw esperados. "
+            f"Buscados: {train_fp}, {val_fp}, {test_fp}"
+        )
+
+    train_df = pd.read_parquet(train_fp)
+    val_df = pd.read_parquet(val_fp)
+    test_df = pd.read_parquet(test_fp)
+
+    x_train, y_train = _split_xy(train_df, TARGET_REG, TARGET_CLF)
+    x_val, y_val = _split_xy(val_df, TARGET_REG, TARGET_CLF)
+    x_test, y_test = _split_xy(test_df, TARGET_REG, TARGET_CLF)
+
+    metadata: Dict[str, object] = {}
+
+    # 1) Drop columnas no útiles para modelado directo
+    forced_drop = [c for c in ["date"] if c in x_train.columns]
+    if forced_drop:
+        x_train = x_train.drop(columns=forced_drop)
+        x_val = x_val.drop(columns=[c for c in forced_drop if c in x_val.columns])
+        x_test = x_test.drop(columns=[c for c in forced_drop if c in x_test.columns])
+    metadata["forced_drop_columns"] = forced_drop
+
+    # 2) Drop por nulos (fit solo train)
+    null_ratio = x_train.isna().mean()
+    high_null_cols = sorted(null_ratio[null_ratio > null_threshold].index.tolist())
+    if high_null_cols:
+        x_train = x_train.drop(columns=high_null_cols)
+        x_val = x_val.drop(columns=[c for c in high_null_cols if c in x_val.columns])
+        x_test = x_test.drop(columns=[c for c in high_null_cols if c in x_test.columns])
+    metadata["high_null_columns_dropped"] = high_null_cols
+
+    # 3) Categóricas: one-hot baja cardinalidad y freq encoding alta cardinalidad
+    cat_cols = x_train.select_dtypes(include=["object", "string", "category", "bool"]).columns.tolist()
+    low_card_cols = []
+    high_card_cols = []
+    for c in cat_cols:
+        n_levels = x_train[c].astype("string").nunique(dropna=True)
+        if n_levels <= onehot_max_levels:
+            low_card_cols.append(c)
+        else:
+            high_card_cols.append(c)
+
+    # alta cardinalidad -> frequency encoding
+    high_card_maps: Dict[str, Dict[str, float]] = {}
+    for c in high_card_cols:
+        tr = x_train[c].astype("string").fillna("__MISSING__")
+        freq_map = tr.value_counts(normalize=True).to_dict()
+        high_card_maps[c] = {str(k): float(v) for k, v in freq_map.items()}
+        new_c = f"{c}__freq"
+        x_train[new_c] = tr.map(freq_map).fillna(0.0)
+        x_val[new_c] = x_val[c].astype("string").fillna("__MISSING__").map(freq_map).fillna(0.0)
+        x_test[new_c] = x_test[c].astype("string").fillna("__MISSING__").map(freq_map).fillna(0.0)
+
+    if high_card_cols:
+        x_train = x_train.drop(columns=high_card_cols)
+        x_val = x_val.drop(columns=[c for c in high_card_cols if c in x_val.columns])
+        x_test = x_test.drop(columns=[c for c in high_card_cols if c in x_test.columns])
+
+    # baja cardinalidad -> one hot
+    if low_card_cols:
+        tr_cat = x_train[low_card_cols].astype("string").fillna("__MISSING__")
+        va_cat = x_val[low_card_cols].astype("string").fillna("__MISSING__")
+        te_cat = x_test[low_card_cols].astype("string").fillna("__MISSING__")
+
+        tr_dum = pd.get_dummies(tr_cat, prefix=low_card_cols, prefix_sep="__")
+        va_dum = pd.get_dummies(va_cat, prefix=low_card_cols, prefix_sep="__")
+        te_dum = pd.get_dummies(te_cat, prefix=low_card_cols, prefix_sep="__")
+
+        va_dum = _align_columns(tr_dum.columns.tolist(), va_dum)
+        te_dum = _align_columns(tr_dum.columns.tolist(), te_dum)
+
+        x_train = x_train.drop(columns=low_card_cols).join(tr_dum)
+        x_val = x_val.drop(columns=low_card_cols).join(va_dum)
+        x_test = x_test.drop(columns=low_card_cols).join(te_dum)
+
+    metadata["categorical_low_card_onehot"] = low_card_cols
+    metadata["categorical_high_card_freq"] = high_card_cols
+
+    # 4) Numéricas -> imputación por mediana
+    num_cols = x_train.select_dtypes(include=[np.number]).columns.tolist()
+    x_train = _safe_numeric(x_train, num_cols)
+    x_val = _safe_numeric(x_val, num_cols)
+    x_test = _safe_numeric(x_test, num_cols)
+
+    medians = x_train[num_cols].median(numeric_only=True)
+    x_train[num_cols] = x_train[num_cols].fillna(medians)
+    x_val[num_cols] = x_val[num_cols].fillna(medians)
+    x_test[num_cols] = x_test[num_cols].fillna(medians)
+
+    # 5) Outliers -> clip por percentiles (fit train)
+    clip_bounds: Dict[str, Tuple[float, float]] = {}
+    for c in num_cols:
+        low = float(x_train[c].quantile(outlier_low_q))
+        high = float(x_train[c].quantile(outlier_high_q))
+        if low > high:
+            low, high = high, low
+        clip_bounds[c] = (low, high)
+        x_train[c] = x_train[c].clip(lower=low, upper=high)
+        x_val[c] = x_val[c].clip(lower=low, upper=high)
+        x_test[c] = x_test[c].clip(lower=low, upper=high)
+
+    # 6) Correlación alta -> drop una de cada pareja (fit train)
+    corr_num_cols = x_train.select_dtypes(include=[np.number]).columns.tolist()
+    corr = x_train[corr_num_cols].corr().abs()
+    upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
+    corr_drop = sorted([c for c in upper.columns if any(upper[c] > corr_threshold)])
+    if corr_drop:
+        x_train = x_train.drop(columns=corr_drop)
+        x_val = x_val.drop(columns=[c for c in corr_drop if c in x_val.columns])
+        x_test = x_test.drop(columns=[c for c in corr_drop if c in x_test.columns])
+
+    metadata["correlation_drop_columns"] = corr_drop
+
+    # 7) Escalado estándar (fit train) en numéricas no binarias
+    scale_cols = []
+    for c in x_train.select_dtypes(include=[np.number]).columns:
+        if not _is_binary_series(x_train[c]):
+            scale_cols.append(c)
+
+    means = x_train[scale_cols].mean()
+    stds = x_train[scale_cols].std().replace(0, 1.0)
+
+    x_train[scale_cols] = (x_train[scale_cols] - means) / stds
+    x_val[scale_cols] = (x_val[scale_cols] - means) / stds
+    x_test[scale_cols] = (x_test[scale_cols] - means) / stds
+
+    # Alinear columnas finales
+    final_cols = x_train.columns.tolist()
+    x_val = _align_columns(final_cols, x_val)
+    x_test = _align_columns(final_cols, x_test)
+
+    # Reunir X + y
+    train_out = pd.concat([x_train, y_train], axis=1)
+    val_out = pd.concat([x_val, y_val], axis=1)
+    test_out = pd.concat([x_test, y_test], axis=1)
+
+    out_train_fp = out_base / f"{prefix}_train.parquet"
+    out_val_fp = out_base / f"{prefix}_val.parquet"
+    out_test_fp = out_base / f"{prefix}_test.parquet"
+    train_out.to_parquet(out_train_fp, index=False)
+    val_out.to_parquet(out_val_fp, index=False)
+    test_out.to_parquet(out_test_fp, index=False)
+
+    metadata.update(
+        {
+            "prefix": prefix,
+            "null_threshold": null_threshold,
+            "corr_threshold": corr_threshold,
+            "onehot_max_levels": onehot_max_levels,
+            "outlier_low_q": outlier_low_q,
+            "outlier_high_q": outlier_high_q,
+            "feature_count": len(final_cols),
+            "scale_columns": scale_cols,
+            "clip_bounds": {k: [float(v[0]), float(v[1])] for k, v in clip_bounds.items()},
+            "rows": {
+                "train": len(train_out),
+                "val": len(val_out),
+                "test": len(test_out),
+            },
+            "files": {
+                "train": str(out_train_fp),
+                "val": str(out_val_fp),
+                "test": str(out_test_fp),
+            },
+        }
+    )
+
+    meta_fp = out_base / f"{prefix}_preprocess_meta.json"
+    with meta_fp.open("w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+    return {
+        "train": str(out_train_fp),
+        "val": str(out_val_fp),
+        "test": str(out_test_fp),
+        "meta": str(meta_fp),
+    }
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(
+        description="Preprocesa splits ML sin leakage (fit solo en train): nulos, outliers, OHE, correlación y escalado."
+    )
+    p.add_argument("--splits-dir", default="data/ml/splits", help="Carpeta de splits raw.")
+    p.add_argument("--prefix", default="completo", help="Prefijo de splits.")
+    p.add_argument("--out-dir", default="data/ml/splits_processed", help="Salida de splits procesados.")
+    p.add_argument("--null-threshold", type=float, default=0.70, help="Eliminar columnas con ratio de nulos > umbral.")
+    p.add_argument("--corr-threshold", type=float, default=0.90, help="Umbral de correlación absoluta para eliminar colinealidad.")
+    p.add_argument("--onehot-max-levels", type=int, default=20, help="Máximo niveles para OHE (si supera, usa freq encoding).")
+    p.add_argument("--outlier-low-q", type=float, default=0.01, help="Percentil inferior para clipping.")
+    p.add_argument("--outlier-high-q", type=float, default=0.99, help="Percentil superior para clipping.")
+    args = p.parse_args()
+
+    out = preprocess_splits(
+        splits_dir=args.splits_dir,
+        prefix=args.prefix,
+        out_dir=args.out_dir,
+        null_threshold=args.null_threshold,
+        corr_threshold=args.corr_threshold,
+        onehot_max_levels=args.onehot_max_levels,
+        outlier_low_q=args.outlier_low_q,
+        outlier_high_q=args.outlier_high_q,
+    )
+
+    print("✅ Splits procesados")
+    print(f"train -> {out['train']}")
+    print(f"val   -> {out['val']}")
+    print(f"test  -> {out['test']}")
+    print(f"meta  -> {out['meta']}")
+
+
+if __name__ == "__main__":
+    main()

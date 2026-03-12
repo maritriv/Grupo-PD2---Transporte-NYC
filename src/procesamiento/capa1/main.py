@@ -28,10 +28,11 @@ def main() -> None:
     project_root = Path(__file__).resolve().parents[3]
 
     modulos = [
-        "src.procesamiento.capa1.capa1_fhv",
         "src.procesamiento.capa1.capa1_green",
         "src.procesamiento.capa1.capa1_yellow",
         "src.procesamiento.capa1.capa1_fhvhv",
+        "src.procesamiento.capa1.capa1_eventos",
+        "src.procesamiento.capa1.capa1_meteo",
     ]
 
     for m in modulos:

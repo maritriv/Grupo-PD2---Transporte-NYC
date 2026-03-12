@@ -35,7 +35,7 @@ servicios:
     
   fhv:
     nombre: "For-Hire Vehicles"
-    habilitado: true
+    habilitado: false
     
   fhvhv:
     nombre: "High Volume FHV"

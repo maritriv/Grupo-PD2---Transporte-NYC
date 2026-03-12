@@ -17,6 +17,8 @@ except Exception:
         return Path(p)
 
 DEBUG = False
+MIN_YEAR = 2023
+MAX_YEAR = 2025
 
 NEEDED_COLS = [
     "tpep_pickup_datetime", "lpep_pickup_datetime", "pickup_datetime",
@@ -43,7 +45,7 @@ def _list_parquets(folder: Path) -> list[Path]:
 
 def iter_validated_tlc_files(
     validated_base: Path,
-    services: Iterable[str] = ("yellow", "green", "fhv", "fhvhv"),
+    services: Iterable[str] = ("yellow", "green", "fhvhv"),
     clean_subdir: str = "clean",
 ) -> Iterator[Tuple[str, Path]]:
     validated_base = Path(validated_base).resolve()
@@ -138,6 +140,7 @@ def build_layer2_tlc(df: pd.DataFrame) -> pd.DataFrame:
     df["year"] = df["pickup_datetime"].dt.year
     df["month"] = df["pickup_datetime"].dt.month
     df["hour"] = df["pickup_datetime"].dt.hour
+    df = df[(df["year"] >= MIN_YEAR) & (df["year"] <= MAX_YEAR)]
 
     dow0 = df["pickup_datetime"].dt.dayofweek
     df["day_of_week"] = ((dow0 + 1) % 7) + 1

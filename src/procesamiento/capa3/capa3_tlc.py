@@ -21,6 +21,8 @@ except Exception:
         return Path(p)
 
 DEBUG = False
+ALLOWED_MIN_DATE = pd.Timestamp("2023-01-01")
+ALLOWED_MAX_DATE = pd.Timestamp("2025-12-31")
 
 NEEDED_COLS = ["date", "hour", "service_type", "pu_location_id", "total_amount_std"]
 
@@ -181,6 +183,8 @@ def normalize_and_filter(
 
     dmin = pd.to_datetime(min_date)
     dmax = pd.to_datetime(max_date)
+    dmin = max(dmin, ALLOWED_MIN_DATE)
+    dmax = min(dmax, ALLOWED_MAX_DATE)
     out = out[(out["date"] >= dmin) & (out["date"] <= dmax)]
 
     out = out[(out["hour"] >= 0) & (out["hour"] <= 23)]
@@ -485,8 +489,8 @@ def main() -> None:
     )
     p.add_argument("--in-dir", default=str(obtener_ruta("data/standarized")), help="Ruta capa 2 (parquets)")
     p.add_argument("--out-dir", default=str(obtener_ruta("data/aggregated")), help="Salida capa 3")
-    p.add_argument("--min-date", default="2019-01-01", help="YYYY-MM-DD (inclusive)")
-    p.add_argument("--max-date", default="2024-03-01", help="YYYY-MM-DD (inclusive)")
+    p.add_argument("--min-date", default="2023-01-01", help="YYYY-MM-DD (inclusive)")
+    p.add_argument("--max-date", default="2025-12-31", help="YYYY-MM-DD (inclusive)")
     p.add_argument("--cap-max-price", type=float, default=500.0, help="Corte superior de precio (default: 500.0)")
     p.add_argument("--min-trips-df2", type=int, default=30, help="Mínimo num_trips en DF2a/DF2b (default: 30)")
     p.add_argument("--min-trips-df3", type=int, default=100, help="Mínimo num_trips en DF3 (default: 100)")

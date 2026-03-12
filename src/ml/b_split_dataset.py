@@ -63,6 +63,9 @@ import os
 from pathlib import Path
 import pandas as pd
 
+MIN_YEAR = 2023
+MAX_YEAR = 2025
+
 
 # -----------------------
 # Split temporal
@@ -80,6 +83,7 @@ def split_timewise(
 
     tmp["date"] = pd.to_datetime(tmp["date"], errors="coerce")
     tmp = tmp.dropna(subset=["date"])
+    tmp = tmp[(tmp["date"].dt.year >= MIN_YEAR) & (tmp["date"].dt.year <= MAX_YEAR)]
 
     tmp["hour"] = pd.to_numeric(tmp["hour"], errors="coerce").fillna(0).astype(int)
 
@@ -107,7 +111,7 @@ def make_split_outputs(
     prefix: str | None = None,
     train_frac: float = 0.70,
     val_frac: float = 0.15,
-) -> None:
+) -> dict[str, str]:
 
     in_fp = Path(input_path).resolve()
 
@@ -140,6 +144,12 @@ def make_split_outputs(
     print(f"train -> {train_fp} ({len(train):,} filas)")
     print(f"val   -> {val_fp} ({len(val):,} filas)")
     print(f"test  -> {test_fp} ({len(test):,} filas)")
+
+    return {
+        "train": str(train_fp),
+        "val": str(val_fp),
+        "test": str(test_fp),
+    }
 
 
 # -----------------------
@@ -182,6 +192,46 @@ def main() -> None:
         default=0.15,
         help="Fracción de validación (default: 0.15)",
     )
+    p.add_argument(
+        "--no-preprocess",
+        action="store_true",
+        help="Si se activa, no genera splits procesados de ML.",
+    )
+    p.add_argument(
+        "--processed-out-dir",
+        default="data/ml/splits_processed",
+        help="Salida de splits procesados (default: data/ml/splits_processed).",
+    )
+    p.add_argument(
+        "--null-threshold",
+        type=float,
+        default=0.70,
+        help="Eliminar columnas con ratio de nulos > umbral en train.",
+    )
+    p.add_argument(
+        "--corr-threshold",
+        type=float,
+        default=0.90,
+        help="Umbral de correlación absoluta para eliminar colinealidad.",
+    )
+    p.add_argument(
+        "--onehot-max-levels",
+        type=int,
+        default=20,
+        help="Máximo niveles para OHE (si supera, frequency encoding).",
+    )
+    p.add_argument(
+        "--outlier-low-q",
+        type=float,
+        default=0.01,
+        help="Percentil inferior para clipping de outliers.",
+    )
+    p.add_argument(
+        "--outlier-high-q",
+        type=float,
+        default=0.99,
+        help="Percentil superior para clipping de outliers.",
+    )
 
     args = p.parse_args()
 
@@ -192,6 +242,25 @@ def main() -> None:
         train_frac=args.train_frac,
         val_frac=args.val_frac,
     )
+
+    if not args.no_preprocess:
+        from src.ml.preprocess_splits import preprocess_splits
+
+        out = preprocess_splits(
+            splits_dir=args.out_dir,
+            prefix=args.prefix,
+            out_dir=args.processed_out_dir,
+            null_threshold=args.null_threshold,
+            corr_threshold=args.corr_threshold,
+            onehot_max_levels=args.onehot_max_levels,
+            outlier_low_q=args.outlier_low_q,
+            outlier_high_q=args.outlier_high_q,
+        )
+        print("\n✅ Splits procesados creados")
+        print(f"train -> {out['train']}")
+        print(f"val   -> {out['val']}")
+        print(f"test  -> {out['test']}")
+        print(f"meta  -> {out['meta']}")
 
 
 if __name__ == "__main__":
