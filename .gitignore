@@ -11,6 +11,8 @@ credentials.json
 # Outputs generados (figuras, plots, etc.)
 outputs/
 
+# Archivo para pruebas
+pruebas.py
 
 # Ignorar todos los archivos PNG (opcional, si no quieres ninguno)
 *.png
