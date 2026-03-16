@@ -37,7 +37,7 @@ HTTP_ERRORS = {
     504: "Gateway Timeout - Timeout del gateway",
 }
 
-ALL_SERVICES = servicios_habilitados()
+ALL_SERVICES = servicios_habilitados
 
 
 def build_url(service: str, year: int, month: int) -> str:
