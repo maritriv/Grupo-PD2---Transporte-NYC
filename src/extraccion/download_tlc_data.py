@@ -15,7 +15,7 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 
-from config.settings import obtener_ruta, config
+from config.settings import obtener_ruta, config, servicios_habilitados
 
 # Configuración base
 BASE_URL = config["descarga"]["url_base"]
@@ -37,7 +37,7 @@ HTTP_ERRORS = {
     504: "Gateway Timeout - Timeout del gateway",
 }
 
-ALL_SERVICES = ("yellow", "green", "fhvhv")
+ALL_SERVICES = servicios_habilitados()
 
 
 def build_url(service: str, year: int, month: int) -> str:
