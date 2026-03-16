@@ -8,16 +8,17 @@ from pathlib import Path
 
 _RAIZ_PROYECTO = Path(__file__).resolve().parents[1]
 
-def cargar_config():
+def _cargar_config():
     """Carga el archivo config.yaml y retorna un diccionario con la configuración."""
-    raiz = _RAIZ_PROYECTO
-    config_path = raiz / "config.yaml"
+    config_path = _RAIZ_PROYECTO / "config.yaml"
     
     if not config_path.exists():
-        raise FileNotFoundError(f"No se encontró config.yaml en {raiz}")
+        raise FileNotFoundError(f"No se encontró config.yaml en {_RAIZ_PROYECTO}")
     
     with open(config_path, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f)
+
+_CONFIG = _cargar_config()
 
 
 def obtener_ruta(tipo: str) -> Path:
@@ -37,7 +38,7 @@ def obtener_ruta(tipo: str) -> Path:
         obtener_ruta('outputs')         # proyecto/outputs/
         obtener_ruta('outputs/figures') # proyecto/outputs/figures/
     """
-    config = cargar_config()
+    config = _CONFIG
     raiz = _RAIZ_PROYECTO
     
     # Dividir el tipo en partes (ej: 'datos/raw' -> ['datos', 'raw'])
@@ -69,7 +70,7 @@ def obtener_servicios_habilitados() -> List[str]:
         Lista con los servicios habilitados
     """
 
-    config = cargar_config()
+    config = _CONFIG
     servicios = config['servicios']
     return [servicio for servicio in servicios.keys() if servicios[servicio]['habilitado']]
 
@@ -77,18 +78,18 @@ def obtener_config_eventos() -> Dict[str, Any]:
     """
     Devuelve la configuración de eventos NYC.
     """
-    config = cargar_config()
+    config = _CONFIG
     return config.get("eventos", {})
 
 def obtener_config_meteo() -> Dict[str, Any]:
     """
     Devuelve la configuración de datos meteorológicos.
     """
-    config = cargar_config()
+    config = _CONFIG
     return config.get("meteo", {})
 
 # Cargar configuración al importar el módulo
-config = cargar_config()
+config = _CONFIG
 servicios_habilitados = obtener_servicios_habilitados()
 eventos_config = obtener_config_eventos()
 meteo_config = obtener_config_meteo()

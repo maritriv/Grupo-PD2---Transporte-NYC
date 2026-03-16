@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.pipeline_runner import ejecutar_modulo, print_done, print_stage
-
+from config.pipeline_runner import ejecutar_modulo, print_done, print_stage
 
 def main() -> None:
     # Estamos en: src/procesamiento/capa2/main.py
@@ -18,7 +17,7 @@ def main() -> None:
     ]
 
     for m in modulos:
-        ejecutar_modulo(m, project_root)
+        ejecutar_modulo(m, [], project_root)
 
     print_done("CAPA 2 COMPLETADA CORRECTAMENTE")
 

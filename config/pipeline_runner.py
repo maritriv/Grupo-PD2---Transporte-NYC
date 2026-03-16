@@ -3,12 +3,12 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from typing import List
 
 from rich.console import Console
 from rich.panel import Panel
 
 console = Console()
-
 
 def print_stage(title: str, subtitle: str | None = None, color: str = "cyan") -> None:
     text = title if subtitle is None else f"{title}\n[dim]{subtitle}[/dim]"
@@ -16,7 +16,7 @@ def print_stage(title: str, subtitle: str | None = None, color: str = "cyan") ->
     console.print(Panel.fit(f"[bold white]{text}[/bold white]", border_style=color))
 
 
-def ejecutar_modulo(modulo: str, project_root: Path) -> None:
+def ejecutar_modulo(modulo: str, args: List[str], project_root: Path) -> None:
     """
     Ejecuta un modulo Python (python -m ...) con el interprete activo,
     desde la raiz del proyecto para que las rutas relativas funcionen.
@@ -26,7 +26,7 @@ def ejecutar_modulo(modulo: str, project_root: Path) -> None:
     console.print("[dim]" + "-" * 60 + "[/dim]")
 
     result = subprocess.run(
-        [sys.executable, "-m", modulo],
+        [sys.executable, "-m", modulo] + args,
         cwd=str(project_root),
     )
 
