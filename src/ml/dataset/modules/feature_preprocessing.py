@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -8,6 +8,9 @@ from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
+from rich.table import Table
+
+from src.pipeline_runner import console, print_done, print_stage
 
 TARGET_REG = "stress_score"
 TARGET_CLF = "is_stress"
@@ -39,7 +42,7 @@ def _is_binary_series(s: pd.Series) -> bool:
     return set(vals).issubset({0, 1})
 
 
-def preprocess_splits(
+def feature_preprocessing(
     splits_dir: str = "data/ml/splits",
     prefix: str = "completo",
     out_dir: str = "data/ml/splits_processed",
@@ -49,7 +52,8 @@ def preprocess_splits(
     outlier_low_q: float = 0.01,
     outlier_high_q: float = 0.99,
 ) -> Dict[str, str]:
-    project_root = Path(__file__).resolve().parents[2]
+    print_stage("ML FEATURE PREPROCESSING", f"Prefix: {prefix}", color="magenta")
+    project_root = Path(__file__).resolve().parents[4]
     in_base = (project_root / splits_dir).resolve()
     out_base = (project_root / out_dir).resolve()
     os.makedirs(out_base, exist_ok=True)
@@ -74,7 +78,7 @@ def preprocess_splits(
 
     metadata: Dict[str, object] = {}
 
-    # 1) Drop columnas no útiles para modelado directo
+    # 1) Drop columnas no Ãºtiles para modelado directo
     forced_drop = [c for c in ["date"] if c in x_train.columns]
     if forced_drop:
         x_train = x_train.drop(columns=forced_drop)
@@ -91,7 +95,7 @@ def preprocess_splits(
         x_test = x_test.drop(columns=[c for c in high_null_cols if c in x_test.columns])
     metadata["high_null_columns_dropped"] = high_null_cols
 
-    # 3) Categóricas: one-hot baja cardinalidad y freq encoding alta cardinalidad
+    # 3) CategÃ³ricas: one-hot baja cardinalidad y freq encoding alta cardinalidad
     cat_cols = x_train.select_dtypes(include=["object", "string", "category", "bool"]).columns.tolist()
     low_card_cols = []
     high_card_cols = []
@@ -138,7 +142,7 @@ def preprocess_splits(
     metadata["categorical_low_card_onehot"] = low_card_cols
     metadata["categorical_high_card_freq"] = high_card_cols
 
-    # 4) Numéricas -> imputación por mediana
+    # 4) NumÃ©ricas -> imputaciÃ³n por mediana
     num_cols = x_train.select_dtypes(include=[np.number]).columns.tolist()
     x_train = _safe_numeric(x_train, num_cols)
     x_val = _safe_numeric(x_val, num_cols)
@@ -161,7 +165,7 @@ def preprocess_splits(
         x_val[c] = x_val[c].clip(lower=low, upper=high)
         x_test[c] = x_test[c].clip(lower=low, upper=high)
 
-    # 6) Correlación alta -> drop una de cada pareja (fit train)
+    # 6) CorrelaciÃ³n alta -> drop una de cada pareja (fit train)
     corr_num_cols = x_train.select_dtypes(include=[np.number]).columns.tolist()
     corr = x_train[corr_num_cols].corr().abs()
     upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
@@ -173,7 +177,7 @@ def preprocess_splits(
 
     metadata["correlation_drop_columns"] = corr_drop
 
-    # 7) Escalado estándar (fit train) en numéricas no binarias
+    # 7) Escalado estÃ¡ndar (fit train) en numÃ©ricas no binarias
     scale_cols = []
     for c in x_train.select_dtypes(include=[np.number]).columns:
         if not _is_binary_series(x_train[c]):
@@ -227,33 +231,49 @@ def preprocess_splits(
         }
     )
 
-    meta_fp = out_base / f"{prefix}_preprocess_meta.json"
+    meta_fp = out_base / f"{prefix}_feature_preprocessing_meta.json"
     with meta_fp.open("w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
 
-    return {
+    out = {
         "train": str(out_train_fp),
         "val": str(out_val_fp),
         "test": str(out_test_fp),
         "meta": str(meta_fp),
     }
 
+    table = Table(title=f"Feature preprocessing ({prefix})", header_style="bold magenta")
+    table.add_column("Metrica", style="bold white")
+    table.add_column("Valor")
+    table.add_row("Rows train", f"{len(train_out):,}")
+    table.add_row("Rows val", f"{len(val_out):,}")
+    table.add_row("Rows test", f"{len(test_out):,}")
+    table.add_row("Features finales", f"{len(final_cols):,}")
+    table.add_row("Train", out["train"])
+    table.add_row("Val", out["val"])
+    table.add_row("Test", out["test"])
+    table.add_row("Meta", out["meta"])
+    console.print(table)
+    print_done("FEATURE PREPROCESSING COMPLETADO")
+
+    return out
+
 
 def main() -> None:
     p = argparse.ArgumentParser(
-        description="Preprocesa splits ML sin leakage (fit solo en train): nulos, outliers, OHE, correlación y escalado."
+        description="Preprocesa splits ML sin leakage (fit solo en train): nulos, outliers, OHE, correlaciÃ³n y escalado."
     )
     p.add_argument("--splits-dir", default="data/ml/splits", help="Carpeta de splits raw.")
     p.add_argument("--prefix", default="completo", help="Prefijo de splits.")
     p.add_argument("--out-dir", default="data/ml/splits_processed", help="Salida de splits procesados.")
     p.add_argument("--null-threshold", type=float, default=0.70, help="Eliminar columnas con ratio de nulos > umbral.")
-    p.add_argument("--corr-threshold", type=float, default=0.90, help="Umbral de correlación absoluta para eliminar colinealidad.")
-    p.add_argument("--onehot-max-levels", type=int, default=20, help="Máximo niveles para OHE (si supera, usa freq encoding).")
+    p.add_argument("--corr-threshold", type=float, default=0.90, help="Umbral de correlaciÃ³n absoluta para eliminar colinealidad.")
+    p.add_argument("--onehot-max-levels", type=int, default=20, help="MÃ¡ximo niveles para OHE (si supera, usa freq encoding).")
     p.add_argument("--outlier-low-q", type=float, default=0.01, help="Percentil inferior para clipping.")
     p.add_argument("--outlier-high-q", type=float, default=0.99, help="Percentil superior para clipping.")
     args = p.parse_args()
 
-    out = preprocess_splits(
+    feature_preprocessing(
         splits_dir=args.splits_dir,
         prefix=args.prefix,
         out_dir=args.out_dir,
@@ -264,12 +284,7 @@ def main() -> None:
         outlier_high_q=args.outlier_high_q,
     )
 
-    print("✅ Splits procesados")
-    print(f"train -> {out['train']}")
-    print(f"val   -> {out['val']}")
-    print(f"test  -> {out['test']}")
-    print(f"meta  -> {out['meta']}")
-
 
 if __name__ == "__main__":
     main()
+

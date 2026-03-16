@@ -62,8 +62,8 @@ Extrae estadísticas básicas (volumen estimado, precio medio, hora pico, númer
 
         -   Directorio __`capa 1/`__: Contiene código responsable de limpiar los datos extraídos.
 
-                -   Archivo `capa1_fhv.py`: Valida estructura y coherencia del servicio FHV. Comprueba tipos, timestamps, rangos válidos y separa registros en clean y badrows.
-                -   Archivo `capa1_fhvhv.py`: Validación específica para el servicio FHVHV (High Volume). Aplica controles estructurales y temporales adaptados a este esquema.
+                -   Archivo `fhv.py`: Valida estructura y coherencia del servicio FHV. Comprueba tipos, timestamps, rangos válidos y separa registros en clean y badrows.
+                -   Archivo `fhvhv.py`: Validación específica para el servicio FHVHV (High Volume). Aplica controles estructurales y temporales adaptados a este esquema.
                 -   Archivo `capa1_green.py`: Valida los datos del servicio Green Taxi, asegurando consistencia en campos monetarios, distancias y timestamps.
                 -   Archivo `capa1_yellow.py`: Valida los datos del servicio Green Taxi, asegurando consistencia en campos monetarios, distancias y timestamps.
                 -   Archivo `main.py`: Ejecuta secuencialmente los validadores de cada servicio y genera los datasets limpios.

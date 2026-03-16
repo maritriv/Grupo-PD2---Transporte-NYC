@@ -244,9 +244,9 @@ def main() -> None:
     )
 
     if not args.no_preprocess:
-        from src.ml.preprocess_splits import preprocess_splits
+        from src.ml.dataset.modules.feature_preprocessing import feature_preprocessing
 
-        out = preprocess_splits(
+        out = feature_preprocessing(
             splits_dir=args.out_dir,
             prefix=args.prefix,
             out_dir=args.processed_out_dir,

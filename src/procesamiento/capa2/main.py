@@ -1,30 +1,15 @@
 from __future__ import annotations
 
-import subprocess
-import sys
 from pathlib import Path
 
-
-def ejecutar_modulo(modulo: str, project_root: Path) -> None:
-    """
-    Ejecuta un módulo Python (python -m ...) usando el intérprete activo (uv/venv),
-    desde la raíz del proyecto para que las rutas relativas funcionen bien.
-    """
-    print(f"\n[INFO] Ejecutando: {modulo}")
-    print("-" * 50)
-
-    result = subprocess.run(
-        [sys.executable, "-m", modulo],
-        cwd=str(project_root),
-    )
-
-    if result.returncode != 0:
-        raise RuntimeError(f"Error ejecutando {modulo}")
+from src.pipeline_runner import ejecutar_modulo, print_done, print_stage
 
 
 def main() -> None:
-    # Estamos en: src/procesamiento/capa2/main.py -> raíz = 3 parents arriba
+    # Estamos en: src/procesamiento/capa2/main.py
+    # Raiz del proyecto = 3 niveles arriba
     project_root = Path(__file__).resolve().parents[3]
+    print_stage("CAPA 2", "Estandarizacion y joins por dominio")
 
     modulos = [
         "src.procesamiento.capa2.capa2_eventos",
@@ -35,7 +20,7 @@ def main() -> None:
     for m in modulos:
         ejecutar_modulo(m, project_root)
 
-    print("\nCAPA 2 COMPLETADA CORRECTAMENTE")
+    print_done("CAPA 2 COMPLETADA CORRECTAMENTE")
 
 
 if __name__ == "__main__":

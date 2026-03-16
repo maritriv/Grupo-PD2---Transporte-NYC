@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 """
-Script: c_model_baseline.py
+Script: a_model_baseline.py
 
 Modelo baseline para predecir stress_score (regresión) e is_stress (clasificación).
 
@@ -22,7 +22,7 @@ EJECUCIÓN
 
 1. Modo normal (usa splits por defecto)
 
-    uv run -m src.ml.c_model_baseline
+    uv run -m src.ml.models.a_model_baseline
 
     Lee:
         data/ml/splits/completo_train.parquet
@@ -35,13 +35,13 @@ EJECUCIÓN
 
 2. Usar splits de un rango concreto
 
-    uv run -m src.ml.c_model_baseline \\
+    uv run -m src.ml.models.a_model_baseline \\
         --prefix rango_2024-01-01__2024-01-14
 
 
 3. Evaluar solo sobre test (omitir val)
 
-    uv run -m src.ml.c_model_baseline --skip-val
+    uv run -m src.ml.models.a_model_baseline --skip-val
 
 """
 
@@ -208,7 +208,7 @@ def run_baselines(
     Carga splits, entrena los 3 baselines sobre train,
     evalúa sobre val y test, y guarda un JSON con los resultados.
     """
-    project_root = Path(__file__).resolve().parents[2]
+    project_root = Path(__file__).resolve().parents[3]
     base = project_root / splits_dir
 
     train_fp = base / f"{prefix}_train.parquet"
@@ -218,7 +218,7 @@ def run_baselines(
     if not train_fp.exists():
         raise FileNotFoundError(
             f"No se encontró el split de train: {train_fp}\n"
-            f"Ejecuta primero:  uv run -m src.ml.b_split_dataset --prefix {prefix}"
+            f"Ejecuta primero:  uv run -m src.ml.dataset.b_split_dataset --prefix {prefix}"
         )
 
     print(f"📂 Cargando splits (prefix={prefix})...")
@@ -302,7 +302,7 @@ def run_baselines(
 def main() -> None:
     p = argparse.ArgumentParser(
         description="Evalúa modelos baseline (mean, median, group_mean) "
-        "sobre los splits generados por b_split_dataset.py."
+        "sobre los splits generados por dataset/b_split_dataset.py."
     )
     p.add_argument(
         "--splits-dir",
