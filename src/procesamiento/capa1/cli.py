@@ -10,6 +10,9 @@ from .core_io import procesar_archivo_en_batches
 from .rules_yellow import clean_yellow_batch
 from .rules_green import clean_green_batch
 from .rules_fhvhv import clean_fhvhv_batch
+from .rules_meteo import clean_meteo_batch
+from .rules_eventos import clean_eventos_batch
+from .rules_rent import clean_rent_batch
 
 from config.settings import obtener_ruta
 
@@ -31,8 +34,8 @@ def _run_pipeline(service_name: str, input_dir: Path, output_dir: Path, cleaning
 
     table = Table(title=f"Resultados {service_name}")
     table.add_column("Archivo", style="cyan")
-    table.add_column("Filas Conservadas (%)", justify="right")
-    table.add_column("Nulos Totales (%)", justify="right")
+    table.add_column("Filas Conservadas", justify="right")
+    table.add_column("Nulos Totales", justify="right")
     
     total_raw, total_clean = 0, 0
 
@@ -48,12 +51,12 @@ def _run_pipeline(service_name: str, input_dir: Path, output_dir: Path, cleaning
             prct_text = Text(f"{prct:.2f}%", style="bold green")
         
         nulos = stats['null_prct']
-        if not nulos:
+        if nulos is None:
             nulos_text = Text("-", style="dim")
         elif nulos < 15:
-            nulos_text = Text(f"{nulos:.2f}", style="magenta")
+            nulos_text = Text(f"{nulos:.2f}%", style="magenta")
         else:
-            nulos_text = Text(f"{nulos:.2f}", style="bold red")
+            nulos_text = Text(f"{nulos:.2f}%", style="bold red")
 
         table.add_row(file_path.name, prct_text, nulos_text)
         total_raw += stats['n_rows']
@@ -84,6 +87,24 @@ def green(input_dir, output_dir):
 def fhvhv(input_dir, output_dir):
     _run_pipeline("HVFHV", Path(input_dir), Path(output_dir), clean_fhvhv_batch)
 
+@cli.command(help="Procesa los datos Metereológicos.")
+@click.option('--input-dir', default=str(obtener_ruta("data/external/meteo/raw")), help="Ruta RAW")
+@click.option('--output-dir', default=str(obtener_ruta("data/external/meteo/validated")), help="Ruta OUT")
+def meteo(input_dir, output_dir):
+    _run_pipeline("Meteo", Path(input_dir), Path(output_dir), clean_meteo_batch)
+
+@cli.command(help="Procesa los datos de Eventos.")
+@click.option('--input-dir', default=str(obtener_ruta("data/external/events/raw")), help="Ruta RAW")
+@click.option('--output-dir', default=str(obtener_ruta("data/external/events/validated")), help="Ruta OUT")
+def events(input_dir, output_dir):
+    _run_pipeline("Events", Path(input_dir), Path(output_dir), clean_eventos_batch)
+
+@cli.command(help="Procesa los datos de Alquiler.")
+@click.option('--input-dir', default=str(obtener_ruta("data/external/rent/raw")), help="Ruta RAW")
+@click.option('--output-dir', default=str(obtener_ruta("data/external/rent/validated")), help="Ruta OUT")
+def rent(input_dir, output_dir):
+    _run_pipeline("Rent", Path(input_dir), Path(output_dir), clean_rent_batch)
+
 @cli.command(help="Ejecuta TODO el pipeline de la capa 1 secuencialmente.")
 @click.pass_context
 def all(ctx):
@@ -91,6 +112,9 @@ def all(ctx):
     ctx.invoke(yellow)
     ctx.invoke(green)
     ctx.invoke(fhvhv)
+    ctx.invoke(meteo)
+    ctx.invoke(events)
+    ctx.invoke(rent)
 
 if __name__ == '__main__':
     cli()

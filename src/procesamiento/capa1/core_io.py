@@ -65,5 +65,6 @@ def procesar_archivo_en_batches(
     if writer:
         writer.close()
 
-    stats["null_prct"] = stats["null_count"] * 100 / (stats["n_rows"] * n_columns) if n_columns > 0 else None
+    stats["null_prct"] = stats["null_count"] * 100 / (stats["n_rows"] * n_columns) if stats["n_rows"] > 0 else None
+    
     return stats

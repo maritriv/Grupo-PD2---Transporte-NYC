@@ -26,10 +26,10 @@ download_rent_data.py
 # =============================================================================
 # Nota: esto es "rent proxy" vía Airbnb (precio por noche). Es útil como señal socioeconómica.
 DEFAULT_URL_GZ = (
-    "https://data.insideairbnb.com/united-states/ny/new-york-city/2025-12-04/data/listings.csv.gz"
+    "https://data.insideairbnb.com/united-states/ny/new-york-city/2024-01-05/data/listings.csv.gz"
 )
 DEFAULT_URL_CSV = (
-    "https://data.insideairbnb.com/united-states/ny/new-york-city/2025-12-04/visualisations/listings.csv"
+    "https://data.insideairbnb.com/united-states/ny/new-york-city/2024-01-05/visualisations/listings.csv"
 )
 
 TIMEOUT = 120
@@ -74,27 +74,7 @@ def _download_file(url: str, out_path: Path) -> None:
 
 def _read_insideairbnb_csv(path: Path) -> pd.DataFrame:
     # pandas detecta gzip por extensión si compression="infer"
-    df = pd.read_csv(path, compression="infer")
-
-    # Normalizaciones típicas
-    if "last_scraped" in df.columns:
-        df["last_scraped"] = pd.to_datetime(df["last_scraped"], errors="coerce")
-
-    # En el "summary listings.csv" suele existir 'price' (a veces como string)
-    if "price" in df.columns:
-        df["price"] = (
-            df["price"]
-            .astype(str)
-            .str.replace("$", "", regex=False)
-            .str.replace(",", "", regex=False)
-        )
-        df["price"] = pd.to_numeric(df["price"], errors="coerce")
-
-    for col in ["latitude", "longitude"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    return df
+    return pd.read_csv(path, compression="infer", low_memory=False).astype(str)
 
 
 # =============================================================================

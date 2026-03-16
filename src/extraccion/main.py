@@ -130,10 +130,13 @@ def download_all(mode: DownloadMode):
         )
 
     # 4. RENT (Airbnb Proxy)
+    DEFAULT_URL_GZ = (
+        "https://data.insideairbnb.com/united-states/ny/new-york-city/2024-01-05/data/listings.csv.gz"
+    )
     if mode in (DownloadMode.ALL, DownloadMode.RENT):
         results['rent'] = run_download_task(
             "Rent Data (Airbnb)", "green", download_rent_snapshot,
-            url=config.get('rent_url', "https://data.insideairbnb.com/united-states/ny/new-york-city/2025-12-04/visualisations/listings.csv"),
+            url=config.get('rent_url', DEFAULT_URL_GZ),
             out_dir=obtener_ruta("data/external/rent/raw")
         )
 
