@@ -28,7 +28,6 @@ def main() -> None:
     project_root = Path(__file__).resolve().parents[2]
 
     modulos = [
-        "src.procesamiento.capa0.main",
         "src.procesamiento.capa1.main",
         "src.procesamiento.capa2.main",
         "src.procesamiento.capa3.main",
