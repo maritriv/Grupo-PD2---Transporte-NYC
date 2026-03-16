@@ -9,6 +9,9 @@ from typing import Iterable, Iterator, Tuple
 
 import pandas as pd
 import pyarrow.parquet as pq
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 try:
     from config.settings import obtener_ruta  # type: ignore
@@ -16,23 +19,39 @@ except Exception:
     def obtener_ruta(p: str) -> Path:
         return Path(p)
 
+
+console = Console()
 DEBUG = False
 MIN_YEAR = 2023
 MAX_YEAR = 2025
 
 NEEDED_COLS = [
-    "tpep_pickup_datetime", "lpep_pickup_datetime", "pickup_datetime",
-    "tpep_dropoff_datetime", "lpep_dropoff_datetime", "dropoff_datetime",
-    "PULocationID", "pu_location_id",
-    "DOLocationID", "do_location_id",
-    "total_amount", "fare_amount",
-    "tip_amount", "tips",
-    "tolls_amount", "tolls",
-    "airport_fee", "Airport_fee",
+    "tpep_pickup_datetime",
+    "lpep_pickup_datetime",
+    "pickup_datetime",
+    "tpep_dropoff_datetime",
+    "lpep_dropoff_datetime",
+    "dropoff_datetime",
+    "PULocationID",
+    "pu_location_id",
+    "DOLocationID",
+    "do_location_id",
+    "total_amount",
+    "fare_amount",
+    "tip_amount",
+    "tips",
+    "tolls_amount",
+    "tolls",
+    "airport_fee",
+    "Airport_fee",
     "congestion_surcharge",
     "base_passenger_fare",
-    "trip_distance", "trip_miles",
-    "VendorID", "passenger_count", "RatecodeID", "payment_type",
+    "trip_distance",
+    "trip_miles",
+    "VendorID",
+    "passenger_count",
+    "RatecodeID",
+    "payment_type",
 ]
 
 
@@ -50,7 +69,7 @@ def iter_validated_tlc_files(
 ) -> Iterator[Tuple[str, Path]]:
     validated_base = Path(validated_base).resolve()
     if not validated_base.exists():
-        print(f"[WARN] No existe validated base: {validated_base}")
+        console.print(f"[bold yellow]WARNING[/bold yellow] No existe validated base: {validated_base}")
         return
 
     for service in services:
@@ -58,10 +77,10 @@ def iter_validated_tlc_files(
         files = _list_parquets(folder)
 
         if not files:
-            print(f"[WARN] No hay parquets en {folder}. Se omite {service}.")
+            console.print(f"[yellow]Aviso:[/yellow] No hay parquets en {folder}. Se omite {service}.")
             continue
 
-        print(f"[INFO] {service}: {len(files)} parquets encontrados")
+        console.print(f"[cyan]{service}[/cyan]: {len(files)} parquets encontrados")
         for fp in files:
             yield service, fp
 
@@ -98,13 +117,18 @@ def build_layer2_tlc(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     num_cols = [
-        "total_amount", "fare_amount",
-        "tip_amount", "tips",
-        "tolls_amount", "tolls",
-        "airport_fee", "Airport_fee",
+        "total_amount",
+        "fare_amount",
+        "tip_amount",
+        "tips",
+        "tolls_amount",
+        "tolls",
+        "airport_fee",
+        "Airport_fee",
         "congestion_surcharge",
         "base_passenger_fare",
-        "trip_distance", "trip_miles",
+        "trip_distance",
+        "trip_miles",
     ]
     for c in num_cols:
         if c in df.columns:
@@ -156,18 +180,34 @@ def build_layer2_tlc(df: pd.DataFrame) -> pd.DataFrame:
 
     cols = [
         "service_type",
-        "pickup_datetime", "dropoff_datetime",
-        "date", "year", "month", "hour", "day_of_week", "is_weekend", "week_of_year",
+        "pickup_datetime",
+        "dropoff_datetime",
+        "date",
+        "year",
+        "month",
+        "hour",
+        "day_of_week",
+        "is_weekend",
+        "week_of_year",
         "trip_duration_min",
-        "pu_location_id", "do_location_id",
+        "pu_location_id",
+        "do_location_id",
         "total_amount_std",
-        "total_amount", "fare_amount",
-        "tip_amount", "tips",
-        "tolls_amount", "tolls",
-        "congestion_surcharge", "airport_fee",
+        "total_amount",
+        "fare_amount",
+        "tip_amount",
+        "tips",
+        "tolls_amount",
+        "tolls",
+        "congestion_surcharge",
+        "airport_fee",
         "base_passenger_fare",
-        "trip_distance", "trip_miles",
-        "VendorID", "passenger_count", "RatecodeID", "payment_type",
+        "trip_distance",
+        "trip_miles",
+        "VendorID",
+        "passenger_count",
+        "RatecodeID",
+        "payment_type",
     ]
     cols = [c for c in cols if c in df.columns]
     return df[cols]
@@ -201,6 +241,8 @@ def iter_parquet_batches(fp: Path, batch_size: int = 200_000):
 
 
 def main():
+    console.print(Panel.fit("[bold cyan]CAPA 2 - TLC: ESTANDARIZACION + PARTICIONADO[/bold cyan]"))
+
     p = argparse.ArgumentParser()
     p.add_argument("--raw-dir", default=str(obtener_ruta("data/validated")))
     p.add_argument("--out-dir", default=str(obtener_ruta("data/standarized")))
@@ -217,35 +259,75 @@ def main():
     validated_base = Path(args.raw_dir)
     out_dir = Path(args.out_dir)
 
+    cfg_table = Table(show_header=True, header_style="bold white", title="Configuracion Capa2 TLC")
+    cfg_table.add_column("Campo", style="bold cyan")
+    cfg_table.add_column("Valor")
+    cfg_table.add_row("raw_dir", str(validated_base))
+    cfg_table.add_row("out_dir", str(out_dir))
+    cfg_table.add_row("mode", args.mode)
+    cfg_table.add_row("filtro", f"{args.date_from or '...'} -> {args.date_to or '...'}")
+    console.print(cfg_table)
+
     if args.mode == "overwrite" and out_dir.exists():
-        print(f"[INFO] Borrando salida: {out_dir}")
+        console.print(f"[yellow]Limpiando salida (overwrite):[/yellow] {out_dir}")
         shutil.rmtree(out_dir)
 
     any_written = False
+    service_stats: dict[str, dict[str, int]] = {}
 
     for service, fp in iter_validated_tlc_files(validated_base):
-        print(f"\n[INFO] Procesando {service} -> {fp.name}")
+        if service not in service_stats:
+            service_stats[service] = {"files": 0, "batches": 0, "rows_in": 0, "rows_out": 0}
+        service_stats[service]["files"] += 1
 
-        for i, df in enumerate(iter_parquet_batches(fp, batch_size=200_000), start=1):
-            print(f"[INFO]   Batch {i}: {len(df)} filas")
-            df["service_type"] = service
+        with console.status(f"[cyan]Procesando {service} -> {fp.name}[/cyan]"):
+            for df in iter_parquet_batches(fp, batch_size=200_000):
+                service_stats[service]["batches"] += 1
+                service_stats[service]["rows_in"] += len(df)
 
-            df2 = build_layer2_tlc(df)
+                df["service_type"] = service
+                df2 = build_layer2_tlc(df)
 
-            if not df2.empty and (args.date_from or args.date_to):
-                dt = pd.to_datetime(df2["date"], errors="coerce")
-                if args.date_from:
-                    df2 = df2[dt >= pd.to_datetime(args.date_from)]
-                if args.date_to:
-                    df2 = df2[dt <= pd.to_datetime(args.date_to)]
+                if not df2.empty and (args.date_from or args.date_to):
+                    dt = pd.to_datetime(df2["date"], errors="coerce")
+                    if args.date_from:
+                        df2 = df2[dt >= pd.to_datetime(args.date_from)]
+                    if args.date_to:
+                        df2 = df2[dt <= pd.to_datetime(args.date_to)]
 
-            write_partitioned(df2, out_dir)
-            any_written = any_written or (not df2.empty)
+                service_stats[service]["rows_out"] += len(df2)
+                write_partitioned(df2, out_dir)
+                any_written = any_written or (not df2.empty)
+
+    summary = Table(show_header=True, header_style="bold magenta", title="Resumen Capa2 TLC por servicio")
+    summary.add_column("Servicio", style="bold white")
+    summary.add_column("Files", justify="right")
+    summary.add_column("Batches", justify="right")
+    summary.add_column("Rows in", justify="right")
+    summary.add_column("Rows out", justify="right")
+
+    total_files = total_batches = total_in = total_out = 0
+    for service in sorted(service_stats.keys()):
+        st = service_stats[service]
+        total_files += st["files"]
+        total_batches += st["batches"]
+        total_in += st["rows_in"]
+        total_out += st["rows_out"]
+        summary.add_row(
+            service,
+            f"{st['files']:,}",
+            f"{st['batches']:,}",
+            f"{st['rows_in']:,}",
+            f"{st['rows_out']:,}",
+        )
+
+    summary.add_row("TOTAL", f"{total_files:,}", f"{total_batches:,}", f"{total_in:,}", f"{total_out:,}")
+    console.print(summary)
 
     if not any_written:
-        print("[WARN] No se escribió nada.")
+        console.print("[bold yellow]WARNING[/bold yellow] No se escribio nada.")
     else:
-        print(f"\n[OK] Capa 2 guardada en: {out_dir}")
+        console.print(f"[bold green]OK[/bold green] Capa 2 TLC guardada en: {out_dir}")
 
 
 if __name__ == "__main__":

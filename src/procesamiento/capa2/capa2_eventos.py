@@ -6,6 +6,9 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 try:
     from config.settings import obtener_ruta, config  # type: ignore
@@ -16,6 +19,7 @@ except Exception:
         return Path(p)
 
 
+console = Console()
 DEBUG = False  # True para ver previews
 MIN_YEAR = 2023
 MAX_YEAR = 2025
@@ -36,32 +40,31 @@ def read_raw_events(in_dir: Path, base_name: str = "events_daily_borough_type") 
     if not in_dir.exists():
         raise FileNotFoundError(f"No existe el directorio RAW: {in_dir}")
 
-    # 1) Antiguo
     parquet_path = in_dir / f"{base_name}.parquet"
     csv_path = in_dir / f"{base_name}.csv"
 
     if parquet_path.exists():
+        console.print(f"[cyan]Lectura RAW[/cyan] parquet unico: {parquet_path.name}")
         return pd.read_parquet(parquet_path)
     if csv_path.exists():
+        console.print(f"[cyan]Lectura RAW[/cyan] csv unico: {csv_path.name}")
         return pd.read_csv(csv_path)
 
-    # 2) Mensual
     files = sorted(in_dir.glob("events_*.parquet"))
     if not files:
         files = sorted(in_dir.glob("events_*.parquet.gz"))
 
     if files:
-        print(f"[INFO] Leyendo {len(files)} archivos RAW mensuales (parquet)...")
+        console.print(f"[cyan]Lectura RAW[/cyan] {len(files)} archivos mensuales parquet")
         dfs = [pd.read_parquet(fp) for fp in files]
         return pd.concat(dfs, ignore_index=True)
 
-    # Fallback CSV si lo usáis
     files = sorted(in_dir.glob("events_*.csv"))
     if not files:
         files = sorted(in_dir.glob("events_*.csv.gz"))
 
     if files:
-        print(f"[INFO] Leyendo {len(files)} archivos RAW mensuales (csv)...")
+        console.print(f"[cyan]Lectura RAW[/cyan] {len(files)} archivos mensuales csv")
         dfs = [pd.read_csv(fp) for fp in files]
         return pd.concat(dfs, ignore_index=True)
 
@@ -78,9 +81,7 @@ def _parse_date(s: str | None) -> pd.Timestamp | None:
 
 
 def filter_by_range(df: pd.DataFrame, date_from: str | None, date_to: str | None) -> pd.DataFrame:
-    """
-    Filtra por rango inclusive [date_from, date_to] usando la columna 'date'.
-    """
+    """Filtra por rango inclusive [date_from, date_to] usando la columna 'date'."""
     if date_from is None and date_to is None:
         return df
 
@@ -109,7 +110,7 @@ def build_layer2_events(df: pd.DataFrame) -> pd.DataFrame:
     df2["event_type"] = df2.get("event_type")
     df2["n_events"] = pd.to_numeric(df2.get("n_events"), errors="coerce").astype("Int64")
 
-    # Higiene mínima
+    # Higiene minima
     df2 = df2.dropna(subset=["date", "hour", "borough", "event_type", "n_events"])
     df2 = df2[(df2["hour"] >= 0) & (df2["hour"] <= 23)]
     df2 = df2[df2["n_events"] >= 0]
@@ -146,26 +147,26 @@ def build_layer2_events(df: pd.DataFrame) -> pd.DataFrame:
     df2 = df2[cols]
 
     if DEBUG:
-        print(df2.head(30))
+        console.print(df2.head(30))
 
     return df2
 
 
-def save_layer2_events(df: pd.DataFrame, out_dir: Path):
+def save_layer2_events(df: pd.DataFrame, out_dir: Path) -> int:
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Un parquet por mes
+    files_written = 0
     for (y, m), g in df.groupby(["year", "month"], dropna=False):
         file_name = f"events_{int(y)}-{int(m):02d}.parquet"
         dest_path = out_dir / file_name
         g.to_parquet(dest_path, index=False, engine="pyarrow")
-
-    print("\n[OK] Capa 2 EVENTOS guardada como archivos individuales en:", out_dir)
+        files_written += 1
+    return files_written
 
 
 def main():
-    print(">>> entrando en main capa2_eventos (PANDAS MODE)")
+    console.print(Panel.fit("[bold cyan]CAPA 2 - EVENTOS: TIPADO + HIGIENE + PARTICIONADO[/bold cyan]"))
 
     events_cfg = (config.get("eventos") or {}) if isinstance(config, dict) else {}
     default_raw_name = events_cfg.get("out_name", "events_daily_borough_type")
@@ -187,16 +188,29 @@ def main():
     raw_dir = validated_dir if validated_dir.exists() else fallback_raw_dir
     out_dir = (project_root / "data" / "external" / "events" / "standarized").resolve()
 
-    print("[DEBUG] raw_dir:", raw_dir)
-    print("[DEBUG] out_dir:", out_dir)
+    cfg_table = Table(show_header=True, header_style="bold white", title="Configuracion Capa2 Eventos")
+    cfg_table.add_column("Campo", style="bold cyan")
+    cfg_table.add_column("Valor")
+    cfg_table.add_row("raw_dir", str(raw_dir))
+    cfg_table.add_row("out_dir", str(out_dir))
+    cfg_table.add_row("filtro", f"{args.date_from or '...'} -> {args.date_to or '...'}")
+    console.print(cfg_table)
 
-    df_raw = read_raw_events(raw_dir, base_name=args.raw_name)
-    df_raw = filter_by_range(df_raw, args.date_from, args.date_to)
+    with console.status("[cyan]Procesando eventos...[/cyan]"):
+        df_raw = read_raw_events(raw_dir, base_name=args.raw_name)
+        df_raw = filter_by_range(df_raw, args.date_from, args.date_to)
+        df_l2 = build_layer2_events(df_raw)
+        files_written = save_layer2_events(df_l2, out_dir)
 
-    df_l2 = build_layer2_events(df_raw)
-    save_layer2_events(df_l2, out_dir)
-
-    print("[OK] rows:", len(df_l2))
+    summary = Table(show_header=True, header_style="bold magenta", title="Resumen Capa2 Eventos")
+    summary.add_column("Metrica", style="bold white")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Rows raw", f"{len(df_raw):,}")
+    summary.add_row("Rows capa2", f"{len(df_l2):,}")
+    summary.add_row("Parquets escritos", f"{files_written:,}")
+    summary.add_row("Salida", str(out_dir))
+    console.print(summary)
+    console.print("[bold green]OK[/bold green] Capa 2 EVENTOS completada")
 
 
 if __name__ == "__main__":
