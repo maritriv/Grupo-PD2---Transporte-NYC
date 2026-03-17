@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.pipeline_runner import console
+from config.pipeline_runner import console
 from src.ml.dataset.modules.display import print_step_status
 from src.ml.dataset.modules.io import read_partitioned_parquet_dir
 

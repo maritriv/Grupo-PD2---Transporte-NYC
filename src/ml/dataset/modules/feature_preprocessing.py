@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from rich.table import Table
 
-from src.pipeline_runner import console, print_done, print_stage
+from config.pipeline_runner import console, print_done, print_stage
 
 TARGET_REG = "stress_score"
 TARGET_CLF = "is_stress"

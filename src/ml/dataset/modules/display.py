@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 from rich.table import Table
 
-from src.pipeline_runner import console
+from config.pipeline_runner import console
 
 
 def print_step_status(step: str, message: str) -> None:

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.pipeline_runner import print_done, print_stage
+from config.pipeline_runner import print_done, print_stage
 from src.ml.dataset.modules.business_metrics import add_business_metrics, reorder_dataset_columns
 from src.ml.dataset.modules.display import print_build_summary, print_rich_table_preview, print_step_status
 from src.ml.dataset.modules.enrichments import join_events, join_meteo
