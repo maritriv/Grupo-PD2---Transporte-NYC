@@ -42,6 +42,86 @@ def _is_binary_series(s: pd.Series) -> bool:
     return set(vals).issubset({0, 1})
 
 
+def _top_nulls_table(null_ratio: pd.Series, limit: int = 10) -> Table:
+    table = Table(title="Top columnas por nulos (train)", header_style="bold yellow")
+    table.add_column("Columna", style="bold white")
+    table.add_column("Null ratio", justify="right")
+    for col, ratio in null_ratio.sort_values(ascending=False).head(limit).items():
+        table.add_row(str(col), f"{float(ratio):.4f}")
+    return table
+
+
+def _correlation_pairs(
+    df: pd.DataFrame,
+    threshold: float,
+) -> tuple[list[str], list[dict[str, float | str]]]:
+    """
+    Devuelve:
+    - lista de columnas a eliminar
+    - lista detallada de pares con correlación > threshold
+    """
+    corr_num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    if not corr_num_cols:
+        return [], []
+
+    corr = df[corr_num_cols].corr().abs()
+    upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
+
+    corr_drop: list[str] = []
+    corr_pairs: list[dict[str, float | str]] = []
+
+    for col in upper.columns:
+        high_corr = upper[col][upper[col] > threshold]
+        if not high_corr.empty:
+            corr_drop.append(col)
+            for other_col, corr_value in high_corr.sort_values(ascending=False).items():
+                corr_pairs.append(
+                    {
+                        "feature_kept": str(other_col),
+                        "feature_dropped": str(col),
+                        "corr_abs": float(corr_value),
+                    }
+                )
+
+    corr_drop = sorted(set(corr_drop))
+    corr_pairs = sorted(corr_pairs, key=lambda x: float(x["corr_abs"]), reverse=True)
+    return corr_drop, corr_pairs
+
+
+def _correlation_table(corr_pairs: list[dict[str, float | str]], limit: int = 15) -> Table:
+    table = Table(title="Top pares con alta correlación", header_style="bold cyan")
+    table.add_column("Feature kept", style="bold white")
+    table.add_column("Feature dropped", style="bold white")
+    table.add_column("|corr|", justify="right")
+
+    for row in corr_pairs[:limit]:
+        table.add_row(
+            str(row["feature_kept"]),
+            str(row["feature_dropped"]),
+            f"{float(row['corr_abs']):.4f}",
+        )
+    return table
+
+
+def _outlier_clip_table(
+    clip_bounds: Dict[str, Tuple[float, float]],
+    limit: int = 12,
+) -> Table:
+    table = Table(title="Clip de outliers (train)", header_style="bold magenta")
+    table.add_column("Columna", style="bold white")
+    table.add_column("Low", justify="right")
+    table.add_column("High", justify="right")
+
+    shown = 0
+    for col, (low, high) in clip_bounds.items():
+        table.add_row(str(col), f"{low:.4f}", f"{high:.4f}")
+        shown += 1
+        if shown >= limit:
+            break
+
+    return table
+
+
 def feature_preprocessing(
     splits_dir: str = "data/ml/splits",
     prefix: str = "completo",
@@ -78,7 +158,7 @@ def feature_preprocessing(
 
     metadata: Dict[str, object] = {}
 
-    # 1) Drop columnas no Ãºtiles para modelado directo
+    # 1) Drop columnas no útiles para modelado directo
     forced_drop = [c for c in ["date"] if c in x_train.columns]
     if forced_drop:
         x_train = x_train.drop(columns=forced_drop)
@@ -93,12 +173,20 @@ def feature_preprocessing(
         x_train = x_train.drop(columns=high_null_cols)
         x_val = x_val.drop(columns=[c for c in high_null_cols if c in x_val.columns])
         x_test = x_test.drop(columns=[c for c in high_null_cols if c in x_test.columns])
-    metadata["high_null_columns_dropped"] = high_null_cols
 
-    # 3) CategÃ³ricas: one-hot baja cardinalidad y freq encoding alta cardinalidad
+    metadata["null_threshold"] = null_threshold
+    metadata["high_null_columns_dropped"] = high_null_cols
+    metadata["top_null_ratios_train"] = {
+        str(k): float(v) for k, v in null_ratio.sort_values(ascending=False).head(20).items()
+    }
+
+    console.print(_top_nulls_table(null_ratio))
+
+    # 3) Categóricas: one-hot baja cardinalidad y freq encoding alta cardinalidad
     cat_cols = x_train.select_dtypes(include=["object", "string", "category", "bool"]).columns.tolist()
     low_card_cols = []
     high_card_cols = []
+
     for c in cat_cols:
         n_levels = x_train[c].astype("string").nunique(dropna=True)
         if n_levels <= onehot_max_levels:
@@ -106,7 +194,6 @@ def feature_preprocessing(
         else:
             high_card_cols.append(c)
 
-    # alta cardinalidad -> frequency encoding
     high_card_maps: Dict[str, Dict[str, float]] = {}
     for c in high_card_cols:
         tr = x_train[c].astype("string").fillna("__MISSING__")
@@ -122,7 +209,6 @@ def feature_preprocessing(
         x_val = x_val.drop(columns=[c for c in high_card_cols if c in x_val.columns])
         x_test = x_test.drop(columns=[c for c in high_card_cols if c in x_test.columns])
 
-    # baja cardinalidad -> one hot
     if low_card_cols:
         tr_cat = x_train[low_card_cols].astype("string").fillna("__MISSING__")
         va_cat = x_val[low_card_cols].astype("string").fillna("__MISSING__")
@@ -139,10 +225,11 @@ def feature_preprocessing(
         x_val = x_val.drop(columns=low_card_cols).join(va_dum)
         x_test = x_test.drop(columns=low_card_cols).join(te_dum)
 
+    metadata["onehot_max_levels"] = onehot_max_levels
     metadata["categorical_low_card_onehot"] = low_card_cols
     metadata["categorical_high_card_freq"] = high_card_cols
 
-    # 4) NumÃ©ricas -> imputaciÃ³n por mediana
+    # 4) Numéricas -> imputación por mediana
     num_cols = x_train.select_dtypes(include=[np.number]).columns.tolist()
     x_train = _safe_numeric(x_train, num_cols)
     x_val = _safe_numeric(x_val, num_cols)
@@ -152,6 +239,8 @@ def feature_preprocessing(
     x_train[num_cols] = x_train[num_cols].fillna(medians)
     x_val[num_cols] = x_val[num_cols].fillna(medians)
     x_test[num_cols] = x_test[num_cols].fillna(medians)
+
+    metadata["imputation_medians"] = {str(k): float(v) for k, v in medians.items()}
 
     # 5) Outliers -> clip por percentiles (fit train)
     clip_bounds: Dict[str, Tuple[float, float]] = {}
@@ -165,19 +254,28 @@ def feature_preprocessing(
         x_val[c] = x_val[c].clip(lower=low, upper=high)
         x_test[c] = x_test[c].clip(lower=low, upper=high)
 
-    # 6) CorrelaciÃ³n alta -> drop una de cada pareja (fit train)
-    corr_num_cols = x_train.select_dtypes(include=[np.number]).columns.tolist()
-    corr = x_train[corr_num_cols].corr().abs()
-    upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
-    corr_drop = sorted([c for c in upper.columns if any(upper[c] > corr_threshold)])
+    metadata["outlier_low_q"] = outlier_low_q
+    metadata["outlier_high_q"] = outlier_high_q
+    metadata["clip_bounds"] = {k: [float(v[0]), float(v[1])] for k, v in clip_bounds.items()}
+
+    console.print(_outlier_clip_table(clip_bounds))
+
+    # 6) Correlación alta -> drop una de cada pareja (fit train)
+    corr_drop, corr_pairs = _correlation_pairs(x_train, corr_threshold)
     if corr_drop:
         x_train = x_train.drop(columns=corr_drop)
         x_val = x_val.drop(columns=[c for c in corr_drop if c in x_val.columns])
         x_test = x_test.drop(columns=[c for c in corr_drop if c in x_test.columns])
 
+    metadata["corr_threshold"] = corr_threshold
     metadata["correlation_drop_columns"] = corr_drop
+    metadata["correlation_pairs_above_threshold"] = corr_pairs
+    metadata["n_correlation_drop_columns"] = len(corr_drop)
 
-    # 7) Escalado estÃ¡ndar (fit train) en numÃ©ricas no binarias
+    if corr_pairs:
+        console.print(_correlation_table(corr_pairs))
+
+    # 7) Escalado estándar (fit train) en numéricas no binarias
     scale_cols = []
     for c in x_train.select_dtypes(include=[np.number]).columns:
         if not _is_binary_series(x_train[c]):
@@ -189,6 +287,10 @@ def feature_preprocessing(
     x_train[scale_cols] = (x_train[scale_cols] - means) / stds
     x_val[scale_cols] = (x_val[scale_cols] - means) / stds
     x_test[scale_cols] = (x_test[scale_cols] - means) / stds
+
+    metadata["scale_columns"] = scale_cols
+    metadata["scale_means"] = {str(k): float(v) for k, v in means.items()}
+    metadata["scale_stds"] = {str(k): float(v) for k, v in stds.items()}
 
     # Alinear columnas finales
     final_cols = x_train.columns.tolist()
@@ -203,6 +305,7 @@ def feature_preprocessing(
     out_train_fp = out_base / f"{prefix}_train.parquet"
     out_val_fp = out_base / f"{prefix}_val.parquet"
     out_test_fp = out_base / f"{prefix}_test.parquet"
+
     train_out.to_parquet(out_train_fp, index=False)
     val_out.to_parquet(out_val_fp, index=False)
     test_out.to_parquet(out_test_fp, index=False)
@@ -210,14 +313,7 @@ def feature_preprocessing(
     metadata.update(
         {
             "prefix": prefix,
-            "null_threshold": null_threshold,
-            "corr_threshold": corr_threshold,
-            "onehot_max_levels": onehot_max_levels,
-            "outlier_low_q": outlier_low_q,
-            "outlier_high_q": outlier_high_q,
             "feature_count": len(final_cols),
-            "scale_columns": scale_cols,
-            "clip_bounds": {k: [float(v[0]), float(v[1])] for k, v in clip_bounds.items()},
             "rows": {
                 "train": len(train_out),
                 "val": len(val_out),
@@ -249,26 +345,28 @@ def feature_preprocessing(
     table.add_row("Rows val", f"{len(val_out):,}")
     table.add_row("Rows test", f"{len(test_out):,}")
     table.add_row("Features finales", f"{len(final_cols):,}")
+    table.add_row("Cols drop nulos", f"{len(high_null_cols):,}")
+    table.add_row("Cols drop correlación", f"{len(corr_drop):,}")
     table.add_row("Train", out["train"])
     table.add_row("Val", out["val"])
     table.add_row("Test", out["test"])
     table.add_row("Meta", out["meta"])
     console.print(table)
-    print_done("FEATURE PREPROCESSING COMPLETADO")
 
+    print_done("FEATURE PREPROCESSING COMPLETADO")
     return out
 
 
 def main() -> None:
     p = argparse.ArgumentParser(
-        description="Preprocesa splits ML sin leakage (fit solo en train): nulos, outliers, OHE, correlaciÃ³n y escalado."
+        description="Preprocesa splits ML sin leakage (fit solo en train): nulos, outliers, OHE, correlación y escalado."
     )
     p.add_argument("--splits-dir", default="data/ml/splits", help="Carpeta de splits raw.")
     p.add_argument("--prefix", default="completo", help="Prefijo de splits.")
     p.add_argument("--out-dir", default="data/ml/splits_processed", help="Salida de splits procesados.")
     p.add_argument("--null-threshold", type=float, default=0.70, help="Eliminar columnas con ratio de nulos > umbral.")
-    p.add_argument("--corr-threshold", type=float, default=0.90, help="Umbral de correlaciÃ³n absoluta para eliminar colinealidad.")
-    p.add_argument("--onehot-max-levels", type=int, default=20, help="MÃ¡ximo niveles para OHE (si supera, usa freq encoding).")
+    p.add_argument("--corr-threshold", type=float, default=0.90, help="Umbral de correlación absoluta para eliminar colinealidad.")
+    p.add_argument("--onehot-max-levels", type=int, default=20, help="Máximo niveles para OHE (si supera, usa freq encoding).")
     p.add_argument("--outlier-low-q", type=float, default=0.01, help="Percentil inferior para clipping.")
     p.add_argument("--outlier-high-q", type=float, default=0.99, help="Percentil superior para clipping.")
     args = p.parse_args()
@@ -287,4 +385,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
