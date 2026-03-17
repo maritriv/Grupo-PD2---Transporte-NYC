@@ -11,9 +11,12 @@ import pandas as pd
 from rich.table import Table
 
 from config.pipeline_runner import console, print_done, print_stage
-
-TARGET_REG = "stress_score"
-TARGET_CLF = "is_stress"
+from src.ml.dataset.modules.model_feature_sets import (
+    FeatureMode,
+    TARGET_CLF,
+    TARGET_REG,
+    get_forced_drop_columns,
+)
 
 
 def _split_xy(df: pd.DataFrame, target_reg: str, target_clf: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -55,11 +58,6 @@ def _correlation_pairs(
     df: pd.DataFrame,
     threshold: float,
 ) -> tuple[list[str], list[dict[str, float | str]]]:
-    """
-    Devuelve:
-    - lista de columnas a eliminar
-    - lista detallada de pares con correlación > threshold
-    """
     corr_num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     if not corr_num_cols:
         return [], []
@@ -126,13 +124,14 @@ def feature_preprocessing(
     splits_dir: str = "data/ml/splits",
     prefix: str = "completo",
     out_dir: str = "data/ml/splits_processed",
+    mode: FeatureMode = "operational",
     null_threshold: float = 0.70,
     corr_threshold: float = 0.90,
     onehot_max_levels: int = 20,
     outlier_low_q: float = 0.01,
     outlier_high_q: float = 0.99,
 ) -> Dict[str, str]:
-    print_stage("ML FEATURE PREPROCESSING", f"Prefix: {prefix}", color="magenta")
+    print_stage("ML FEATURE PREPROCESSING", f"Prefix: {prefix} | Mode: {mode}", color="magenta")
     project_root = Path(__file__).resolve().parents[4]
     in_base = (project_root / splits_dir).resolve()
     out_base = (project_root / out_dir).resolve()
@@ -156,10 +155,10 @@ def feature_preprocessing(
     x_val, y_val = _split_xy(val_df, TARGET_REG, TARGET_CLF)
     x_test, y_test = _split_xy(test_df, TARGET_REG, TARGET_CLF)
 
-    metadata: Dict[str, object] = {}
+    metadata: Dict[str, object] = {"mode": mode}
 
-    # 1) Drop columnas no útiles para modelado directo
-    forced_drop = [c for c in ["date"] if c in x_train.columns]
+    # 1) Drop columnas forzadas según modo
+    forced_drop = [c for c in get_forced_drop_columns(mode) if c in x_train.columns]
     if forced_drop:
         x_train = x_train.drop(columns=forced_drop)
         x_val = x_val.drop(columns=[c for c in forced_drop if c in x_val.columns])
@@ -182,7 +181,7 @@ def feature_preprocessing(
 
     console.print(_top_nulls_table(null_ratio))
 
-    # 3) Categóricas: one-hot baja cardinalidad y freq encoding alta cardinalidad
+    # 3) Categóricas
     cat_cols = x_train.select_dtypes(include=["object", "string", "category", "bool"]).columns.tolist()
     low_card_cols = []
     high_card_cols = []
@@ -229,7 +228,7 @@ def feature_preprocessing(
     metadata["categorical_low_card_onehot"] = low_card_cols
     metadata["categorical_high_card_freq"] = high_card_cols
 
-    # 4) Numéricas -> imputación por mediana
+    # 4) Numéricas -> imputación
     num_cols = x_train.select_dtypes(include=[np.number]).columns.tolist()
     x_train = _safe_numeric(x_train, num_cols)
     x_val = _safe_numeric(x_val, num_cols)
@@ -242,7 +241,7 @@ def feature_preprocessing(
 
     metadata["imputation_medians"] = {str(k): float(v) for k, v in medians.items()}
 
-    # 5) Outliers -> clip por percentiles (fit train)
+    # 5) Outliers
     clip_bounds: Dict[str, Tuple[float, float]] = {}
     for c in num_cols:
         low = float(x_train[c].quantile(outlier_low_q))
@@ -260,7 +259,7 @@ def feature_preprocessing(
 
     console.print(_outlier_clip_table(clip_bounds))
 
-    # 6) Correlación alta -> drop una de cada pareja (fit train)
+    # 6) Correlación
     corr_drop, corr_pairs = _correlation_pairs(x_train, corr_threshold)
     if corr_drop:
         x_train = x_train.drop(columns=corr_drop)
@@ -275,7 +274,7 @@ def feature_preprocessing(
     if corr_pairs:
         console.print(_correlation_table(corr_pairs))
 
-    # 7) Escalado estándar (fit train) en numéricas no binarias
+    # 7) Escalado
     scale_cols = []
     for c in x_train.select_dtypes(include=[np.number]).columns:
         if not _is_binary_series(x_train[c]):
@@ -289,22 +288,20 @@ def feature_preprocessing(
     x_test[scale_cols] = (x_test[scale_cols] - means) / stds
 
     metadata["scale_columns"] = scale_cols
-    metadata["scale_means"] = {str(k): float(v) for k, v in means.items()}
-    metadata["scale_stds"] = {str(k): float(v) for k, v in stds.items()}
 
-    # Alinear columnas finales
+    # Alinear columnas
     final_cols = x_train.columns.tolist()
     x_val = _align_columns(final_cols, x_val)
     x_test = _align_columns(final_cols, x_test)
 
-    # Reunir X + y
     train_out = pd.concat([x_train, y_train], axis=1)
     val_out = pd.concat([x_val, y_val], axis=1)
     test_out = pd.concat([x_test, y_test], axis=1)
 
-    out_train_fp = out_base / f"{prefix}_train.parquet"
-    out_val_fp = out_base / f"{prefix}_val.parquet"
-    out_test_fp = out_base / f"{prefix}_test.parquet"
+    # Salidas con sufijo por modo
+    out_train_fp = out_base / f"{prefix}_{mode}_train.parquet"
+    out_val_fp = out_base / f"{prefix}_{mode}_val.parquet"
+    out_test_fp = out_base / f"{prefix}_{mode}_test.parquet"
 
     train_out.to_parquet(out_train_fp, index=False)
     val_out.to_parquet(out_val_fp, index=False)
@@ -327,7 +324,7 @@ def feature_preprocessing(
         }
     )
 
-    meta_fp = out_base / f"{prefix}_feature_preprocessing_meta.json"
+    meta_fp = out_base / f"{prefix}_{mode}_feature_preprocessing_meta.json"
     with meta_fp.open("w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
 
@@ -338,13 +335,14 @@ def feature_preprocessing(
         "meta": str(meta_fp),
     }
 
-    table = Table(title=f"Feature preprocessing ({prefix})", header_style="bold magenta")
+    table = Table(title=f"Feature preprocessing ({prefix} | {mode})", header_style="bold magenta")
     table.add_column("Metrica", style="bold white")
     table.add_column("Valor")
     table.add_row("Rows train", f"{len(train_out):,}")
     table.add_row("Rows val", f"{len(val_out):,}")
     table.add_row("Rows test", f"{len(test_out):,}")
     table.add_row("Features finales", f"{len(final_cols):,}")
+    table.add_row("Cols drop forzadas", f"{len(forced_drop):,}")
     table.add_row("Cols drop nulos", f"{len(high_null_cols):,}")
     table.add_row("Cols drop correlación", f"{len(corr_drop):,}")
     table.add_row("Train", out["train"])
@@ -353,7 +351,7 @@ def feature_preprocessing(
     table.add_row("Meta", out["meta"])
     console.print(table)
 
-    print_done("FEATURE PREPROCESSING COMPLETADO")
+    print_done(f"FEATURE PREPROCESSING COMPLETADO ({mode})")
     return out
 
 
@@ -364,6 +362,7 @@ def main() -> None:
     p.add_argument("--splits-dir", default="data/ml/splits", help="Carpeta de splits raw.")
     p.add_argument("--prefix", default="completo", help="Prefijo de splits.")
     p.add_argument("--out-dir", default="data/ml/splits_processed", help="Salida de splits procesados.")
+    p.add_argument("--mode", choices=["operational", "predictive"], default="operational", help="Modo de features.")
     p.add_argument("--null-threshold", type=float, default=0.70, help="Eliminar columnas con ratio de nulos > umbral.")
     p.add_argument("--corr-threshold", type=float, default=0.90, help="Umbral de correlación absoluta para eliminar colinealidad.")
     p.add_argument("--onehot-max-levels", type=int, default=20, help="Máximo niveles para OHE (si supera, usa freq encoding).")
@@ -375,6 +374,7 @@ def main() -> None:
         splits_dir=args.splits_dir,
         prefix=args.prefix,
         out_dir=args.out_dir,
+        mode=args.mode,
         null_threshold=args.null_threshold,
         corr_threshold=args.corr_threshold,
         onehot_max_levels=args.onehot_max_levels,
