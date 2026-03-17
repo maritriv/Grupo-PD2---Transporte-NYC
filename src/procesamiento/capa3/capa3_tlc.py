@@ -13,6 +13,9 @@ from typing import Dict, Iterable, Iterator, List, Tuple
 
 import numpy as np
 import pandas as pd
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 try:
     from config.settings import obtener_ruta  # type: ignore
@@ -23,8 +26,53 @@ except Exception:
 DEBUG = False
 ALLOWED_MIN_DATE = pd.Timestamp("2023-01-01")
 ALLOWED_MAX_DATE = pd.Timestamp("2025-12-31")
+console = Console()
 
 NEEDED_COLS = ["date", "hour", "service_type", "pu_location_id", "total_amount_std"]
+
+
+# -----------------------------------------------------------------------------
+# Helpers de filesystem
+# -----------------------------------------------------------------------------
+def safe_remove_dir(path: Path) -> None:
+    """
+    Borra una carpeta si existe.
+    Si no existe, no hace nada.
+    Si está bloqueada, lanza un error más claro.
+    """
+    path = Path(path).resolve()
+    if not path.exists():
+        return
+
+    try:
+        shutil.rmtree(path)
+    except PermissionError as exc:
+        raise PermissionError(
+            f"No se pudo borrar la carpeta '{path}'. "
+            "Probablemente está abierta en VS Code, en el explorador de archivos "
+            "o bloqueada por otro proceso de Python."
+        ) from exc
+
+
+def cleanup_tlc_outputs(out_base: Path) -> None:
+    """
+    Limpia solo las salidas propias de capa3 TLC.
+    No borra toda data/aggregated para no afectar otros datasets.
+    """
+    targets = [
+        out_base / "df_daily_service",
+        out_base / "df_zone_hour_day_global",
+        out_base / "df_zone_hour_day_service",
+        out_base / "df_variability",
+    ]
+
+    console.print("[yellow]Limpiando salidas de capa3 TLC (overwrite)...[/yellow]")
+    for d in targets:
+        if d.exists():
+            console.print(f"  - borrando {d}")
+            safe_remove_dir(d)
+        else:
+            console.print(f"  - no existe, se creará: {d}")
 
 
 # -----------------------------------------------------------------------------
@@ -64,8 +112,6 @@ def iter_month_partitions(base: Path) -> Iterator[Tuple[int, int, List[Path]]]:
                     month = None
 
         if year is None or month is None:
-            # Si algún parquet no sigue la estructura esperada, lo ignoramos.
-            # Así evitamos mezclar cosas raras.
             continue
 
         month_map.setdefault((year, month), []).append(fp)
@@ -292,102 +338,95 @@ def build_layer3_streaming_monthly(
 
     total_months = len(month_parts)
     total_files = sum(len(files) for _, _, files in month_parts)
-    print(f"[INFO] Meses detectados: {total_months}")
-    print(f"[INFO] Parquets detectados en Capa 2: {total_files}")
+    info = Table(show_header=True, header_style="bold white", title="Entrada Capa3 TLC")
+    info.add_column("Metrica", style="bold cyan")
+    info.add_column("Valor", justify="right")
+    info.add_row("Meses detectados", f"{total_months:,}")
+    info.add_row("Parquets detectados", f"{total_files:,}")
+    console.print(info)
 
-    # DF3 global
     var_stats: Dict[Tuple[int, int, str], Tuple[RunningStats, Reservoir]] = {}
+    month_summary_rows: list[tuple[str, int, int, int, int]] = []
 
     processed_files = 0
 
     for mi, (year, month, files) in enumerate(month_parts, start=1):
-        print(f"\n[INFO] Procesando mes {mi}/{total_months}: {year}-{month:02d} ({len(files)} parquets)")
-
-        # Acumuladores SOLO del mes actual: se liberan al final del mes
         daily_stats: Dict[Tuple[pd.Timestamp, str], RunningStats] = {}
         daily_zones: Dict[Tuple[pd.Timestamp, str], set] = {}
 
         zhd_global: Dict[Tuple[int, int, pd.Timestamp], RunningStats] = {}
         zhd_service: Dict[Tuple[int, int, pd.Timestamp, str], RunningStats] = {}
 
-        for fi, fp in enumerate(files, start=1):
-            processed_files += 1
+        with console.status(
+            f"[cyan]Procesando mes {mi}/{total_months}: {year}-{month:02d} ({len(files)} parquets)...[/cyan]"
+        ):
+            for _, fp in enumerate(files, start=1):
+                processed_files += 1
 
-            if fi % 25 == 0 or fi == len(files):
-                print(
-                    f"[INFO]   Mes {year}-{month:02d}: fichero {fi}/{len(files)} "
-                    f"(global {processed_files}/{total_files})"
+                df_raw = pd.read_parquet(fp, columns=NEEDED_COLS)
+                df = normalize_and_filter(
+                    df_raw,
+                    min_date=min_date,
+                    max_date=max_date,
+                    cap_max_price=cap_max_price,
                 )
 
-            df_raw = pd.read_parquet(fp, columns=NEEDED_COLS)
-            df = normalize_and_filter(
-                df_raw,
-                min_date=min_date,
-                max_date=max_date,
-                cap_max_price=cap_max_price,
-            )
+                del df_raw
 
-            del df_raw
+                if df.empty:
+                    del df
+                    gc.collect()
+                    continue
 
-            if df.empty:
+                for (d, svc), g in df.groupby(["date", "service_type"], dropna=False):
+                    key = (d, svc)
+                    st = daily_stats.get(key)
+                    if st is None:
+                        st = RunningStats()
+                        daily_stats[key] = st
+                        daily_zones[key] = set()
+
+                    x = g["total_amount_std"].to_numpy(dtype=float, copy=False)
+                    st.add(x)
+                    daily_zones[key].update(g["pu_location_id"].astype(int).unique().tolist())
+
+                for (z, h, d), g in df.groupby(["pu_location_id", "hour", "date"], dropna=False):
+                    key = (int(z), int(h), d)
+                    st = zhd_global.get(key)
+                    if st is None:
+                        st = RunningStats()
+                        zhd_global[key] = st
+                    st.add(g["total_amount_std"].to_numpy(dtype=float, copy=False))
+
+                for (z, h, d, svc), g in df.groupby(
+                    ["pu_location_id", "hour", "date", "service_type"],
+                    dropna=False,
+                ):
+                    key = (int(z), int(h), d, str(svc))
+                    st = zhd_service.get(key)
+                    if st is None:
+                        st = RunningStats()
+                        zhd_service[key] = st
+                    st.add(g["total_amount_std"].to_numpy(dtype=float, copy=False))
+
+                for (z, h, svc), g in df.groupby(
+                    ["pu_location_id", "hour", "service_type"],
+                    dropna=False,
+                ):
+                    key = (int(z), int(h), str(svc))
+                    pair = var_stats.get(key)
+                    if pair is None:
+                        pair = (RunningStats(), Reservoir(k=reservoir_k, seed=42))
+                        var_stats[key] = pair
+
+                    st, res = pair
+                    x = g["total_amount_std"].to_numpy(dtype=float, copy=False)
+                    st.add(x)
+                    res.add_many(x)
+
                 del df
                 gc.collect()
-                continue
 
-            # DF1 mensual: date + service_type
-            for (d, svc), g in df.groupby(["date", "service_type"], dropna=False):
-                key = (d, svc)
-                st = daily_stats.get(key)
-                if st is None:
-                    st = RunningStats()
-                    daily_stats[key] = st
-                    daily_zones[key] = set()
-
-                x = g["total_amount_std"].to_numpy(dtype=float, copy=False)
-                st.add(x)
-                daily_zones[key].update(g["pu_location_id"].astype(int).unique().tolist())
-
-            # DF2a mensual: pu_location_id + hour + date
-            for (z, h, d), g in df.groupby(["pu_location_id", "hour", "date"], dropna=False):
-                key = (int(z), int(h), d)
-                st = zhd_global.get(key)
-                if st is None:
-                    st = RunningStats()
-                    zhd_global[key] = st
-                st.add(g["total_amount_std"].to_numpy(dtype=float, copy=False))
-
-            # DF2b mensual: pu_location_id + hour + date + service_type
-            for (z, h, d, svc), g in df.groupby(
-                ["pu_location_id", "hour", "date", "service_type"],
-                dropna=False,
-            ):
-                key = (int(z), int(h), d, str(svc))
-                st = zhd_service.get(key)
-                if st is None:
-                    st = RunningStats()
-                    zhd_service[key] = st
-                st.add(g["total_amount_std"].to_numpy(dtype=float, copy=False))
-
-            # DF3 global: pu_location_id + hour + service_type
-            for (z, h, svc), g in df.groupby(
-                ["pu_location_id", "hour", "service_type"],
-                dropna=False,
-            ):
-                key = (int(z), int(h), str(svc))
-                pair = var_stats.get(key)
-                if pair is None:
-                    pair = (RunningStats(), Reservoir(k=reservoir_k, seed=42))
-                    var_stats[key] = pair
-
-                st, res = pair
-                x = g["total_amount_std"].to_numpy(dtype=float, copy=False)
-                st.add(x)
-                res.add_many(x)
-
-            del df
-            gc.collect()
-
-        # ---- construir y guardar SOLO lo mensual
         df_daily_service = finalize_types(monthly_daily_service_to_df(daily_stats, daily_zones))
         df_zone_hour_day_global = finalize_types(monthly_zone_hour_day_global_to_df(zhd_global, min_trips_df2))
         df_zone_hour_day_service = finalize_types(monthly_zone_hour_day_service_to_df(zhd_service, min_trips_df2))
@@ -408,19 +447,20 @@ def build_layer3_streaming_monthly(
             partition_cols=["date", "service_type"],
         )
 
-        print(
-            f"[INFO]   Guardado mes {year}-{month:02d}: "
-            f"df1={len(df_daily_service)} filas, "
-            f"df2a={len(df_zone_hour_day_global)} filas, "
-            f"df2b={len(df_zone_hour_day_service)} filas"
+        month_summary_rows.append(
+            (
+                f"{year}-{month:02d}",
+                len(files),
+                len(df_daily_service),
+                len(df_zone_hour_day_global),
+                len(df_zone_hour_day_service),
+            )
         )
 
-        # liberar acumuladores mensuales
         del daily_stats, daily_zones, zhd_global, zhd_service
         del df_daily_service, df_zone_hour_day_global, df_zone_hour_day_service
         gc.collect()
 
-    # ---- DF3 global final
     rows3 = []
     for (z, h, svc), (st, res) in var_stats.items():
         if st.n < min_trips_df3:
@@ -457,6 +497,16 @@ def build_layer3_streaming_monthly(
 
     df_variability = finalize_types(df_variability)
 
+    month_summary = Table(show_header=True, header_style="bold magenta", title="Resumen mensual Capa3 TLC")
+    month_summary.add_column("Mes", style="bold white")
+    month_summary.add_column("Parquets", justify="right")
+    month_summary.add_column("DF1 filas", justify="right")
+    month_summary.add_column("DF2a filas", justify="right")
+    month_summary.add_column("DF2b filas", justify="right")
+    for mes, n_files, n_df1, n_df2a, n_df2b in month_summary_rows:
+        month_summary.add_row(mes, f"{n_files:,}", f"{n_df1:,}", f"{n_df2a:,}", f"{n_df2b:,}")
+    console.print(month_summary)
+
     return df_variability
 
 
@@ -473,17 +523,23 @@ def save_df3_only(
         partition_cols=["service_type"],
     )
 
-    print("\nCapa 3 guardada en:", out_base)
-    print(" - df_daily_service           ->", out_base / "df_daily_service")
-    print(" - df_zone_hour_day_global    ->", out_base / "df_zone_hour_day_global")
-    print(" - df_zone_hour_day_service   ->", out_base / "df_zone_hour_day_service")
-    print(" - df_variability             ->", out_base / "df_variability")
+    outputs = Table(show_header=True, header_style="bold magenta", title="Salida Capa3 TLC")
+    outputs.add_column("Dataset", style="bold white")
+    outputs.add_column("Path")
+    outputs.add_row("df_daily_service", str(out_base / "df_daily_service"))
+    outputs.add_row("df_zone_hour_day_global", str(out_base / "df_zone_hour_day_global"))
+    outputs.add_row("df_zone_hour_day_service", str(out_base / "df_zone_hour_day_service"))
+    outputs.add_row("df_variability", str(out_base / "df_variability"))
+    console.print(outputs)
+    console.print(f"[bold green]OK[/bold green] Capa 3 TLC guardada en: {out_base}")
 
 
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 def main() -> None:
+    console.print(Panel.fit("[bold cyan]CAPA 3 - TLC: AGREGADOS STREAMING + VARIABILIDAD[/bold cyan]"))
+
     p = argparse.ArgumentParser(
         description="Capa 3 (sin Spark): DF1/DF2 por mes y DF3 global, guardado particionado."
     )
@@ -494,7 +550,12 @@ def main() -> None:
     p.add_argument("--cap-max-price", type=float, default=500.0, help="Corte superior de precio (default: 500.0)")
     p.add_argument("--min-trips-df2", type=int, default=30, help="Mínimo num_trips en DF2a/DF2b (default: 30)")
     p.add_argument("--min-trips-df3", type=int, default=100, help="Mínimo num_trips en DF3 (default: 100)")
-    p.add_argument("--mode", choices=["overwrite", "append"], default="overwrite", help="overwrite borra salida")
+    p.add_argument(
+        "--mode",
+        choices=["overwrite", "append"],
+        default="append",
+        help="append conserva salidas existentes; overwrite las borra antes de recalcular",
+    )
     p.add_argument("--reservoir-k", type=int, default=500, help="Tamaño reservoir para IQR aprox (default: 500)")
     args = p.parse_args()
 
@@ -504,25 +565,41 @@ def main() -> None:
     layer2_path = Path(args.in_dir)
     out_base = Path(args.out_dir).resolve()
 
-    if args.mode == "overwrite" and out_base.exists():
-        print(f"[INFO] Borrando salida (overwrite): {out_base}")
-        shutil.rmtree(out_base)
+    cfg = Table(show_header=True, header_style="bold white", title="Configuracion Capa3 TLC")
+    cfg.add_column("Campo", style="bold cyan")
+    cfg.add_column("Valor")
+    cfg.add_row("in_dir", str(layer2_path))
+    cfg.add_row("out_dir", str(out_base))
+    cfg.add_row("min_date", args.min_date)
+    cfg.add_row("max_date", args.max_date)
+    cfg.add_row("cap_max_price", str(args.cap_max_price))
+    cfg.add_row("min_trips_df2", str(args.min_trips_df2))
+    cfg.add_row("min_trips_df3", str(args.min_trips_df3))
+    cfg.add_row("mode", args.mode)
+    cfg.add_row("reservoir_k", str(args.reservoir_k))
+    console.print(cfg)
+
+    if args.mode == "overwrite":
+        cleanup_tlc_outputs(out_base)
+    else:
+        console.print("[yellow]Modo append:[/yellow] se conservarán las salidas existentes si ya están creadas.")
 
     out_base.mkdir(parents=True, exist_ok=True)
 
-    df3 = build_layer3_streaming_monthly(
-        layer2_path=layer2_path,
-        out_base=out_base,
-        min_date=args.min_date,
-        max_date=args.max_date,
-        cap_max_price=args.cap_max_price,
-        min_trips_df2=args.min_trips_df2,
-        min_trips_df3=args.min_trips_df3,
-        reservoir_k=args.reservoir_k,
-    )
+    with console.status("[cyan]Procesando capa3 TLC...[/cyan]"):
+        df3 = build_layer3_streaming_monthly(
+            layer2_path=layer2_path,
+            out_base=out_base,
+            min_date=args.min_date,
+            max_date=args.max_date,
+            cap_max_price=args.cap_max_price,
+            min_trips_df2=args.min_trips_df2,
+            min_trips_df3=args.min_trips_df3,
+            reservoir_k=args.reservoir_k,
+        )
 
     if DEBUG:
-        print(df3.head())
+        console.print(df3.head())
 
     save_df3_only(df3, out_base=out_base)
 

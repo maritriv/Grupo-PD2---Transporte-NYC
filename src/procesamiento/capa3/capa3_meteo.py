@@ -6,6 +6,9 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 try:
     from config.settings import obtener_ruta, config  # type: ignore
@@ -17,6 +20,7 @@ except Exception:
 DEBUG = False  # True para ver previews
 MIN_YEAR = 2023
 MAX_YEAR = 2025
+console = Console()
 
 
 def read_layer2_meteo(layer2_path: Path) -> pd.DataFrame:
@@ -34,7 +38,7 @@ def read_layer2_meteo(layer2_path: Path) -> pd.DataFrame:
     if not files:
         raise FileNotFoundError(f"No hay parquets dentro de {layer2_path}")
 
-    print(f"[INFO] Leyendo {len(files)} archivos de Capa 2...")
+    console.print(f"[cyan]Lectura Capa 2[/cyan] {len(files)} parquets detectados")
     dfs = [pd.read_parquet(fp) for fp in files]
     df = pd.concat(dfs, ignore_index=True)
     return df
@@ -153,9 +157,9 @@ def build_layer3_meteo(df2: pd.DataFrame):
         )
 
     if DEBUG:
-        print(df_hour_day.head())
-        print(df_daily.head())
-        print(df_hourly_pattern.head())
+        console.print(df_hour_day.head())
+        console.print(df_daily.head())
+        console.print(df_hourly_pattern.head())
 
     return df_hour_day, df_daily, df_hourly_pattern, df_weathercode_daily
 
@@ -176,10 +180,22 @@ def save_layer3_meteo(df_hour_day, df_daily, df_hourly_pattern, df_weathercode_d
         (out_base / "df_weathercode_daily").mkdir(parents=True, exist_ok=True)
         df_weathercode_daily.to_parquet(out_base / "df_weathercode_daily" / "data.parquet", index=False, engine="pyarrow")
 
-    print("\nCapa 3 METEO guardada en:", out_base)
+    summary = Table(show_header=True, header_style="bold magenta", title="Resumen Capa3 Meteo")
+    summary.add_column("Dataset", style="bold white")
+    summary.add_column("Rows", justify="right")
+    summary.add_column("Salida")
+    summary.add_row("df_hour_day", f"{len(df_hour_day):,}", str(out_base / "df_hour_day"))
+    summary.add_row("df_daily", f"{len(df_daily):,}", str(out_base / "df_daily"))
+    summary.add_row("df_hourly_pattern", f"{len(df_hourly_pattern):,}", str(out_base / "df_hourly_pattern"))
+    if df_weathercode_daily is not None:
+        summary.add_row("df_weathercode_daily", f"{len(df_weathercode_daily):,}", str(out_base / "df_weathercode_daily"))
+    console.print(summary)
+    console.print(f"[bold green]OK[/bold green] Capa 3 METEO guardada en: {out_base}")
 
 
 def main():
+    console.print(Panel.fit("[bold cyan]CAPA 3 - METEO: AGREGADOS HORARIOS Y DIARIOS[/bold cyan]"))
+
     p = argparse.ArgumentParser(description="Capa 3 Meteo (sin Spark): agregados horarios y diarios.")
     p.add_argument("--from", dest="date_from", default=None, help="YYYY-MM-DD (inclusive)")
     p.add_argument("--to", dest="date_to", default=None, help="YYYY-MM-DD (inclusive)")
@@ -194,14 +210,20 @@ def main():
     layer2_path = (project_root / "data" / "external" / "meteo" / "standarized").resolve()
     out_base = (project_root / "data" / "external" / "meteo" / "aggregated").resolve()
 
-    print("[DEBUG] layer2_path:", layer2_path)
-    print("[DEBUG] out_base:", out_base)
+    cfg = Table(show_header=True, header_style="bold white", title="Configuracion Capa3 Meteo")
+    cfg.add_column("Campo", style="bold cyan")
+    cfg.add_column("Valor")
+    cfg.add_row("layer2_path", str(layer2_path))
+    cfg.add_row("out_base", str(out_base))
+    cfg.add_row("filtro", f"{args.date_from or '...'} -> {args.date_to or '...'}")
+    console.print(cfg)
 
-    df2 = read_layer2_meteo(layer2_path)
-    df2 = filter_by_range(df2, args.date_from, args.date_to)
+    with console.status("[cyan]Procesando capa3 meteo...[/cyan]"):
+        df2 = read_layer2_meteo(layer2_path)
+        df2 = filter_by_range(df2, args.date_from, args.date_to)
 
-    df_hour_day, df_daily, df_hourly_pattern, df_weathercode_daily = build_layer3_meteo(df2)
-    save_layer3_meteo(df_hour_day, df_daily, df_hourly_pattern, df_weathercode_daily, out_base)
+        df_hour_day, df_daily, df_hourly_pattern, df_weathercode_daily = build_layer3_meteo(df2)
+        save_layer3_meteo(df_hour_day, df_daily, df_hourly_pattern, df_weathercode_daily, out_base)
 
 
 if __name__ == "__main__":

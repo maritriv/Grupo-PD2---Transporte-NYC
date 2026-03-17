@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 try:
     from config.settings import obtener_ruta  # type: ignore
@@ -19,6 +22,7 @@ except Exception:
 DEBUG = False  # True para ver previews
 MIN_YEAR = 2023
 MAX_YEAR = 2025
+console = Console()
 
 
 # -----------------------------------------------------------------------------
@@ -44,7 +48,7 @@ def read_layer2_events(layer2_path: Path, base_name: str = "events_daily_borough
         files = sorted(layer2_path.glob("events_*.parquet.gz"))
 
     if files:
-        print(f"[INFO] Leyendo {len(files)} archivos Capa 2 (parquet)...")
+        console.print(f"[cyan]Lectura Capa 2[/cyan] {len(files)} parquets detectados")
         dfs = [pd.read_parquet(fp) for fp in files]
         return pd.concat(dfs, ignore_index=True)
 
@@ -159,10 +163,10 @@ def build_layer3_events(df2: pd.DataFrame, min_events_hour_day: int = 1):
     df_hourly_pattern["std_events"] = df_hourly_pattern["std_events"].fillna(0.0)
 
     if DEBUG:
-        print(df_borough_hour_day.head(10))
-        print(df_daily_borough.head(10))
-        print(df_type_daily_borough.head(10))
-        print(df_hourly_pattern.head(10))
+        console.print(df_borough_hour_day.head(10))
+        console.print(df_daily_borough.head(10))
+        console.print(df_type_daily_borough.head(10))
+        console.print(df_hourly_pattern.head(10))
 
     return df_borough_hour_day, df_daily_borough, df_type_daily_borough, df_hourly_pattern
 
@@ -234,7 +238,7 @@ def save_layer3_events_spark_style(
     out_base.mkdir(parents=True, exist_ok=True)
 
     if mode == "overwrite" and out_base.exists():
-        print(f"[INFO] Borrando salida (overwrite): {out_base}")
+        console.print(f"[yellow]Limpiando salida (overwrite):[/yellow] {out_base}")
         shutil.rmtree(out_base)
         out_base.mkdir(parents=True, exist_ok=True)
 
@@ -259,17 +263,24 @@ def save_layer3_events_spark_style(
         partition_cols=["borough"],
     )
 
-    print("\n[OK] Capa 3 EVENTOS guardada en:", out_base)
-    print(" - df_borough_hour_day     ->", out_base / "df_borough_hour_day")
-    print(" - df_daily_borough        ->", out_base / "df_daily_borough")
-    print(" - df_type_daily_borough   ->", out_base / "df_type_daily_borough")
-    print(" - df_hourly_pattern       ->", out_base / "df_hourly_pattern")
+    summary = Table(show_header=True, header_style="bold magenta", title="Resumen Capa3 Eventos")
+    summary.add_column("Dataset", style="bold white")
+    summary.add_column("Rows", justify="right")
+    summary.add_column("Salida")
+    summary.add_row("df_borough_hour_day", f"{len(df_borough_hour_day):,}", str(out_base / "df_borough_hour_day"))
+    summary.add_row("df_daily_borough", f"{len(df_daily_borough):,}", str(out_base / "df_daily_borough"))
+    summary.add_row("df_type_daily_borough", f"{len(df_type_daily_borough):,}", str(out_base / "df_type_daily_borough"))
+    summary.add_row("df_hourly_pattern", f"{len(df_hourly_pattern):,}", str(out_base / "df_hourly_pattern"))
+    console.print(summary)
+    console.print(f"[bold green]OK[/bold green] Capa 3 EVENTOS guardada en: {out_base}")
 
 
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 def main():
+    console.print(Panel.fit("[bold cyan]CAPA 3 - EVENTOS: AGREGADOS + SALIDA PARTICIONADA[/bold cyan]"))
+
     p = argparse.ArgumentParser(description="Capa 3 Eventos (sin Spark): agregados + salida idéntica a Spark partitionBy.")
     p.add_argument("--from", dest="date_from", default=None, help="YYYY-MM-DD (inclusive)")
     p.add_argument("--to", dest="date_to", default=None, help="YYYY-MM-DD (inclusive)")
@@ -290,14 +301,22 @@ def main():
     # Path
     out_base = (project_root / "data" / "aggregated" / "events").resolve()
 
-    print("[DEBUG] layer2_path:", layer2_path)
-    print("[DEBUG] out_base:", out_base)
+    cfg = Table(show_header=True, header_style="bold white", title="Configuracion Capa3 Eventos")
+    cfg.add_column("Campo", style="bold cyan")
+    cfg.add_column("Valor")
+    cfg.add_row("layer2_path", str(layer2_path))
+    cfg.add_row("out_base", str(out_base))
+    cfg.add_row("filtro", f"{args.date_from or '...'} -> {args.date_to or '...'}")
+    cfg.add_row("min_events", str(args.min_events))
+    cfg.add_row("mode", args.mode)
+    console.print(cfg)
 
-    df2 = read_layer2_events(layer2_path)
-    df2 = filter_by_range(df2, args.date_from, args.date_to)
+    with console.status("[cyan]Procesando capa3 eventos...[/cyan]"):
+        df2 = read_layer2_events(layer2_path)
+        df2 = filter_by_range(df2, args.date_from, args.date_to)
 
-    df_bhd, df_db, df_tdb, df_hp = build_layer3_events(df2, min_events_hour_day=args.min_events)
-    save_layer3_events_spark_style(df_bhd, df_db, df_tdb, df_hp, out_base, mode=args.mode)
+        df_bhd, df_db, df_tdb, df_hp = build_layer3_events(df2, min_events_hour_day=args.min_events)
+        save_layer3_events_spark_style(df_bhd, df_db, df_tdb, df_hp, out_base, mode=args.mode)
 
 
 if __name__ == "__main__":
