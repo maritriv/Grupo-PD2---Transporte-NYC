@@ -12,7 +12,7 @@ def main() -> None:
     print_stage("PREPROCESAMIENTO", "Capas 1 -> 2 -> 3")
 
     modulos = [
-        ("src.procesamiento.capa1.modules.cli", ["all"]),
+        ("src.procesamiento.capa1.cli", ["all"]),
         ("src.procesamiento.capa2.main", []),
         ("src.procesamiento.capa3.main", []),
     ]
