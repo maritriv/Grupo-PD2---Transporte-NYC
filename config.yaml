@@ -80,8 +80,10 @@ meteo:
   # Configuración de red
   timeout: 120
 
-# Datos de alquiler Airbnb
-rent_url: "https://data.insideairbnb.com/united-states/ny/new-york-city/2024-01-05/data/listings.csv.gz"
+# Datos de alquiler NYC
+# Si se deja en null, el extractor descubre automáticamente el snapshot más reciente
+# de Inside Airbnb para New York City y usa por defecto el dataset de resumen.
+rent_url: null
 
 # Configuración de Spark optimizada para 28GB
 spark:
