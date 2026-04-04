@@ -1092,7 +1092,7 @@ def main():
 
     p = argparse.ArgumentParser()
     p.add_argument("--raw-dir", default=str(obtener_ruta("data/validated")))
-    p.add_argument("--out-dir", default=str(obtener_ruta("data/standardized")))
+    p.add_argument("--out-dir", default=str(obtener_ruta("data/standarized")))
     p.add_argument("--reports-dir", default=str(obtener_ruta("outputs/procesamiento/capa2_reports")))
     p.add_argument("--audit-dir", default=str(obtener_ruta("outputs/procesamiento/capa2_audit")))
     p.add_argument("--tmp-dir", default=str(obtener_ruta("data/tmp/capa2_stage")))
