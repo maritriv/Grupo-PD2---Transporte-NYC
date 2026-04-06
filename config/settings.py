@@ -88,8 +88,16 @@ def obtener_config_meteo() -> Dict[str, Any]:
     config = _CONFIG
     return config.get("meteo", {})
 
+def obtener_config_restaurants() -> Dict[str, Any]:
+    """
+    Devuelve la configuración de inspecciones de restaurantes NYC.
+    """
+    config = _CONFIG
+    return config.get("restaurants", {})
+
 # Cargar configuración al importar el módulo
 config = _CONFIG
 servicios_habilitados = obtener_servicios_habilitados()
 eventos_config = obtener_config_eventos()
 meteo_config = obtener_config_meteo()
+restaurants_config = obtener_config_restaurants()

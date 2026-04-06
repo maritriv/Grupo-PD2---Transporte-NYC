@@ -85,6 +85,17 @@ meteo:
 # de Inside Airbnb para New York City y usa por defecto el dataset de resumen.
 rent_url: null
 
+# Inspecciones de restaurantes NYC
+restaurants:
+  url_base: "https://data.cityofnewyork.us"
+  dataset_id: "43nn-pn8j"
+  start_year: 2024
+  end_year: 2025
+  start_month: 1
+  end_month: 12
+  socrata_limit: 10000
+  timeout_segundos: 60
+
 # Configuración de Spark optimizada para 28GB
 spark:
   app_name: "NYC_Transport_Stress_SaaS"

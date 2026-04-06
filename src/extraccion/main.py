@@ -12,9 +12,17 @@ from src.extraccion.download_tlc_data import download_service_data
 from src.extraccion.download_events_data import download_events_range
 from src.extraccion.download_meteo_data import download_meteo_range
 from src.extraccion.download_rent_data import download_rent_snapshot 
+from src.extraccion.download_restaurants_data import download_restaurants_range
 from src.extraccion.download_taxi_zones import download_taxi_lookup 
 
-from config.settings import obtener_ruta, config, servicios_habilitados, eventos_config, meteo_config
+from config.settings import (
+    obtener_ruta,
+    config,
+    servicios_habilitados,
+    eventos_config,
+    meteo_config,
+    restaurants_config,
+)
 
 console = Console()
 
@@ -24,6 +32,7 @@ class DownloadMode(str, Enum):
     EVENTS = "events"
     METEO = "meteo"
     RENT = "rent"
+    RESTAURANTS = "restaurants"
     ZONES = "zones"
 
 # =============================================================================
@@ -139,7 +148,17 @@ def download_all(mode: DownloadMode):
             dataset_kind="summary",
         )
 
-    # 5. TAXI ZONES
+    # 5. RESTAURANTS
+    if mode in (DownloadMode.ALL, DownloadMode.RESTAURANTS):
+        results['restaurants'] = run_download_task(
+            "Restaurantes NYC", "red", download_restaurants_range,
+            dataset_id=restaurants_config['dataset_id'],
+            start_year=restaurants_config['start_year'], end_year=restaurants_config['end_year'],
+            start_month=restaurants_config['start_month'], end_month=restaurants_config['end_month'],
+            out_dir=obtener_ruta("data/external/restaurants/raw")
+        )
+
+    # 6. TAXI ZONES
     if mode in (DownloadMode.ALL, DownloadMode.ZONES):
         results['zones'] = run_download_task(
             "Taxi Zones Lookup", "yellow", download_taxi_lookup,
