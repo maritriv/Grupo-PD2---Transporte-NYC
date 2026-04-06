@@ -7,7 +7,7 @@ import logging
 import subprocess
 import pyspark
 from pyspark.sql import SparkSession
-from config.settings import cargar_config, obtener_ruta
+from config.settings import config, obtener_ruta
 
 # Configuración de logs
 from rich.logging import RichHandler
@@ -65,7 +65,7 @@ class SparkManager:
             findspark.init()
             
             # 2. Cargar parámetros del config.yaml
-            conf = cargar_config().get('spark', {})
+            conf = config.get('spark', {})
             
             # 3. Definir rutas temporales dentro del proyecto (para que no ensucie el sistema)
             warehouse_path = str(obtener_ruta('data').parent / "spark-warehouse")

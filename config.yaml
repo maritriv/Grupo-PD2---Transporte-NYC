@@ -89,9 +89,10 @@ rent_url: null
 spark:
   app_name: "NYC_Transport_Stress_SaaS"
   # 'local[*]' usa todos los núcleos disponibles
+  # "yarn" Le dice que corra distribuido en el clúster
   master: "local[*]"
-  driver_memory: "8g"
-  executor_memory: "4g"
+  driver_memory: "2g"
+  executor_memory: "1g"
   # El puerto de la UI (por defecto 4040, lo cambiamos para evitar conflictos)
   ui_port: 4050
   # Particiones: para 28GB local, 200 suele estar bien, pero para dev mejor 8-16
