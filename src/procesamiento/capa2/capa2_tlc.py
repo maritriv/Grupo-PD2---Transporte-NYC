@@ -147,7 +147,7 @@ class FileStats:
     file_month: Optional[int] = None
 
     rows_in: int = 0
-    rows_after_standardize: int = 0
+    rows_after_standarize: int = 0
     rows_removed_missing_core: int = 0
     rows_removed_wrong_month: int = 0
     duplicated_exact_found: int = 0
@@ -257,7 +257,7 @@ def output_partition_exists(out_dir: Path, service: str, year: Optional[int], mo
 # ---------------------------------------------------------------------
 # Estandarización base
 # ---------------------------------------------------------------------
-def standardize_tlc(df: pd.DataFrame, service: str) -> pd.DataFrame:
+def standarize_tlc(df: pd.DataFrame, service: str) -> pd.DataFrame:
     """
     Capa 2: armonización analítica.
     No repite validaciones estructurales duras de Capa 1.
@@ -912,7 +912,7 @@ def flatten_stats_for_csv(stats: FileStats) -> Dict[str, object]:
         "file_month": stats.file_month,
         "context_mode": stats.context_mode,
         "rows_in": stats.rows_in,
-        "rows_after_standardize": stats.rows_after_standardize,
+        "rows_after_standarize": stats.rows_after_standarize,
         "rows_removed_missing_core": stats.rows_removed_missing_core,
         "rows_removed_wrong_month": stats.rows_removed_wrong_month,
         "duplicated_exact_found": stats.duplicated_exact_found,
@@ -948,7 +948,7 @@ def print_file_summary(stats: FileStats) -> None:
     t.add_row("service", stats.service)
     t.add_row("context_mode", stats.context_mode)
     t.add_row("rows_in", f"{stats.rows_in:,}")
-    t.add_row("after_standardize", f"{stats.rows_after_standardize:,}")
+    t.add_row("after_standarize", f"{stats.rows_after_standarize:,}")
     t.add_row("removed_missing_core", f"{stats.rows_removed_missing_core:,}")
     t.add_row("removed_wrong_month", f"{stats.rows_removed_wrong_month:,}")
     t.add_row("dup_exact_removed", f"{stats.rows_removed_duplicates_exact:,}")
@@ -1010,8 +1010,8 @@ def process_file(
     for i, batch_df in enumerate(iter_parquet_batches(fp, batch_size=batch_size)):
         stats.rows_in += len(batch_df)
 
-        std = standardize_tlc(batch_df, service)
-        stats.rows_after_standardize += len(std)
+        std = standarize_tlc(batch_df, service)
+        stats.rows_after_standarize += len(std)
 
         std = remove_rows_missing_core(std, stats)
         std = enforce_expected_month(std, fp, stats)
@@ -1221,7 +1221,7 @@ def main():
         service_stats.setdefault(st.service, {
             "files": 0,
             "rows_in": 0,
-            "rows_after_standardize": 0,
+            "rows_after_standarize": 0,
             "rows_removed_missing_core": 0,
             "rows_removed_wrong_month": 0,
             "rows_removed_duplicates_exact": 0,
@@ -1229,7 +1229,7 @@ def main():
         })
         service_stats[st.service]["files"] += 1
         service_stats[st.service]["rows_in"] += st.rows_in
-        service_stats[st.service]["rows_after_standardize"] += st.rows_after_standardize
+        service_stats[st.service]["rows_after_standarize"] += st.rows_after_standarize
         service_stats[st.service]["rows_removed_missing_core"] += st.rows_removed_missing_core
         service_stats[st.service]["rows_removed_wrong_month"] += st.rows_removed_wrong_month
         service_stats[st.service]["rows_removed_duplicates_exact"] += st.rows_removed_duplicates_exact
@@ -1252,7 +1252,7 @@ def main():
     total = {
         "files": 0,
         "rows_in": 0,
-        "rows_after_standardize": 0,
+        "rows_after_standarize": 0,
         "rows_removed_missing_core": 0,
         "rows_removed_wrong_month": 0,
         "rows_removed_duplicates_exact": 0,
@@ -1268,7 +1268,7 @@ def main():
             service,
             f"{st['files']:,}",
             f"{st['rows_in']:,}",
-            f"{st['rows_after_standardize']:,}",
+            f"{st['rows_after_standarize']:,}",
             f"{st['rows_removed_missing_core']:,}",
             f"{st['rows_removed_wrong_month']:,}",
             f"{st['rows_removed_duplicates_exact']:,}",
@@ -1279,7 +1279,7 @@ def main():
         "TOTAL",
         f"{total['files']:,}",
         f"{total['rows_in']:,}",
-        f"{total['rows_after_standardize']:,}",
+        f"{total['rows_after_standarize']:,}",
         f"{total['rows_removed_missing_core']:,}",
         f"{total['rows_removed_wrong_month']:,}",
         f"{total['rows_removed_duplicates_exact']:,}",
