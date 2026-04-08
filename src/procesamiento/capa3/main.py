@@ -17,6 +17,8 @@ def main() -> None:
         "src.procesamiento.capa3.capa3_tlc",
         "src.procesamiento.capa3.capa3_rent",
         "src.procesamiento.capa3.capa3_restaurants",
+        "src.procesamiento.capa3.capa3_demanda",   # ejercicio 1a
+        "src.procesamiento.capa3.capa3_propinas",  # ejercicio 1b
     ]
 
     for m in modulos:
