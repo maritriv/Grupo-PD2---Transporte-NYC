@@ -14,6 +14,8 @@ def main() -> None:
         "src.procesamiento.capa2.capa2_eventos",
         "src.procesamiento.capa2.capa2_meteo",
         "src.procesamiento.capa2.capa2_tlc",
+        "src.procesamiento.capa2.capa2_rent",
+        "src.procesamiento.capa2.capa2_restaurants",
     ]
 
     for m in modulos:
