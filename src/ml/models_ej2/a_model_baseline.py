@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from rich.default_styles import args
+
 """
 Script: a_model_baseline.py
 
@@ -199,9 +201,10 @@ def evaluate_baseline(
 # Ejecución principal
 # ──────────────────────────────────────────────
 def run_baselines(
-    splits_dir: str = "data/ml/splits",
-    prefix: str = "completo",
+    splits_dir: str = "data/ml/splits_processed",
+    prefix: str = "dataset_completo",
     out_dir: str = "outputs/ml",
+    mode: str = "predictive",   # o "operational"
     skip_val: bool = False,
 ) -> dict[str, Any]:
     """
@@ -209,11 +212,11 @@ def run_baselines(
     evalúa sobre val y test, y guarda un JSON con los resultados.
     """
     project_root = Path(__file__).resolve().parents[3]
-    base = project_root / splits_dir
-
-    train_fp = base / f"{prefix}_train.parquet"
-    val_fp = base / f"{prefix}_val.parquet"
-    test_fp = base / f"{prefix}_test.parquet"
+    
+    base = Path(args.splits_dir)
+    train_fp = base / f"{args.prefix}_{args.mode}_train.parquet"
+    val_fp   = base / f"{args.prefix}_{args.mode}_val.parquet"
+    test_fp  = base / f"{args.prefix}_{args.mode}_test.parquet"
 
     if not train_fp.exists():
         raise FileNotFoundError(

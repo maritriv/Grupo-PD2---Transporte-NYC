@@ -8,8 +8,8 @@ import pandas as pd
 
 from config.pipeline_runner import print_done, print_stage
 from src.ml.dataset.modules.display import print_build_summary, print_rich_table_preview, print_step_status
-from src.ml.dataset.modules.enrichments import join_events, join_meteo
-from src.ml.dataset.modules.enrichments_ex1 import join_rent, join_restaurants
+from src.ml.dataset.modules.enrichments_ej2 import join_events, join_meteo
+from src.ml.dataset.modules.enrichments_ej1 import join_rent, join_restaurants
 from src.ml.dataset.modules.io import ensure_cols, read_partitioned_parquet_dir, safe_date_for_filename
 from src.ml.dataset.modules.zone_lookup import load_zone_lookup
 

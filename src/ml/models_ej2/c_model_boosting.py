@@ -35,7 +35,7 @@ def rmse(y_true: pd.Series, y_pred: np.ndarray) -> float:
 
 def load_processed_splits(
     splits_dir: str = "data/ml/splits_processed",
-    prefix: str = "completo",
+    prefix: str = "dataset_completo",
     mode: str = "operational",
 ) -> dict[str, pd.DataFrame]:
     if mode not in VALID_MODES:
@@ -97,7 +97,7 @@ def save_json(data: dict[str, Any], out_path: Path) -> None:
 # -----------------------------------------------------------------------------
 def run_xgboost_models(
     splits_dir: str = "data/ml/splits_processed",
-    prefix: str = "completo",
+    prefix: str = "dataset_completo",
     mode: str = "operational",
     outputs_dir: str = "outputs/ml",
 ) -> dict[str, Any]:
