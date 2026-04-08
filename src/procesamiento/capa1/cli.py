@@ -13,6 +13,7 @@ from .rules_fhvhv import clean_fhvhv_batch
 from .rules_meteo import clean_meteo_batch
 from .rules_eventos import clean_eventos_batch
 from .rules_rent import clean_rent_batch
+from .rules_restaurants import clean_restaurants_batch
 
 from config.settings import obtener_ruta
 
@@ -105,6 +106,12 @@ def events(input_dir, output_dir):
 def rent(input_dir, output_dir):
     _run_pipeline("Rent", Path(input_dir), Path(output_dir), clean_rent_batch)
 
+@cli.command(help="Procesa los datos de Restaurantes.")
+@click.option('--input-dir', default=str(obtener_ruta("data/external/restaurants/raw")), help="Ruta RAW")
+@click.option('--output-dir', default=str(obtener_ruta("data/external/restaurants/validated")), help="Ruta OUT")
+def restaurants(input_dir, output_dir):
+    _run_pipeline("Restaurants", Path(input_dir), Path(output_dir), clean_restaurants_batch)
+
 @cli.command(help="Ejecuta TODO el pipeline de la capa 1 secuencialmente.")
 @click.pass_context
 def all(ctx):
@@ -115,6 +122,7 @@ def all(ctx):
     ctx.invoke(meteo)
     ctx.invoke(events)
     ctx.invoke(rent)
+    ctx.invoke(restaurants)
 
 if __name__ == '__main__':
     cli()
