@@ -10,9 +10,9 @@ def main() -> None:
     print_stage("ML DATASET", "Build + Split + Feature preprocessing")
 
     modulos = [
-        "src.ml.dataset.a_build_dataset_ejercicio1a",
-        "src.ml.dataset.a_build_dataset_ejercicio1b",
-        "src.ml.dataset.a_build_dataset_ejercicio2",
+        "src.ml.dataset.a_build_dataset_ej1a",
+        "src.ml.dataset.a_build_dataset_ej1b",
+        "src.ml.dataset.a_build_dataset_ej2",
         "src.ml.dataset.b_split_dataset",
     ]
 
