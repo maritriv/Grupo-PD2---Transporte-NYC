@@ -11,7 +11,8 @@ def main() -> None:
 
     modulos = [
         "src.ml.dataset.main",
-        "src.ml.models.main",
+        "src.ml.models_ej1.main",
+        "src.ml.models_ej2.main",
     ]
 
     for m in modulos:

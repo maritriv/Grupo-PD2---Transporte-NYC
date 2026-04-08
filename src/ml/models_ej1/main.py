@@ -7,20 +7,17 @@ from config.pipeline_runner import ejecutar_modulo, print_done, print_stage
 
 def main() -> None:
     project_root = Path(__file__).resolve().parents[3]
-    print_stage("ML MODELOS", "Baselines y modelos finales")
+    print_stage("MODELOS EJ2", "Ejecución de modelos del ejercicio 2")
 
     modulos = [
-        "src.ml.models.a_model_baseline",
-        "src.ml.models.b_model_random_forest",
-        "src.ml.models.c_model_boosting",
-        "src.ml.models.d_model_nn",
-        "src.ml.models.e_model_spark",
+        "src.ml.models_ej2.model_a_demanda",
+        "src.ml.models_ej2.model_b_propinas",
     ]
 
     for m in modulos:
         ejecutar_modulo(m, [], project_root)
 
-    print_done("MODELOS ML COMPLETADOS CORRECTAMENTE")
+    print_done("MODELOS EJ2 COMPLETADOS CORRECTAMENTE")
 
 
 if __name__ == "__main__":
