@@ -249,6 +249,44 @@ def build_multiclass_dataset(df_panel: pd.DataFrame) -> tuple[pd.DataFrame, dict
     return dataset, metadata
 
 
+def select_feature_columns(
+    df_samples: pd.DataFrame,
+    train_df: pd.DataFrame,
+    feature_scope: str = "train_winner_zones",
+) -> tuple[list[str], dict[str, Any]]:
+    all_feature_cols = [c for c in df_samples.columns if c not in NON_FEATURE_COLS]
+
+    if feature_scope == "all":
+        return all_feature_cols, {
+            "feature_scope": feature_scope,
+            "n_all_feature_columns": int(len(all_feature_cols)),
+            "n_selected_feature_columns": int(len(all_feature_cols)),
+            "selected_candidate_zones": [],
+        }
+
+    if feature_scope != "train_winner_zones":
+        raise ValueError(
+            "feature_scope no soportado. Usa 'all' o 'train_winner_zones'."
+        )
+
+    train_candidate_zones = sorted(
+        int(v) for v in train_df["target_zone_id"].dropna().unique().tolist()
+    )
+    selected = [
+        c
+        for c in all_feature_cols
+        if (c in GLOBAL_FEATURE_COLS)
+        or any(c.startswith(f"zone_{zone_id}__") for zone_id in train_candidate_zones)
+    ]
+
+    return selected, {
+        "feature_scope": feature_scope,
+        "n_all_feature_columns": int(len(all_feature_cols)),
+        "n_selected_feature_columns": int(len(selected)),
+        "selected_candidate_zones": train_candidate_zones,
+    }
+
+
 def split_timewise_samples(
     df: pd.DataFrame,
     train_frac: float = 0.70,
@@ -295,7 +333,6 @@ def build_models(random_state: int) -> dict[str, Pipeline]:
                     LogisticRegression(
                         max_iter=1000,
                         solver="lbfgs",
-                        multi_class="multinomial",
                         class_weight="balanced",
                         random_state=random_state,
                     ),
@@ -498,6 +535,7 @@ def run_training(
     min_date: str | None = None,
     max_date: str | None = None,
     top_k_values: list[int] | None = None,
+    feature_scope: str = "train_winner_zones",
 ) -> dict[str, Any]:
     if top_k_values is None:
         top_k_values = [3, 5]
@@ -522,13 +560,18 @@ def run_training(
     if len(class_labels) < 2:
         raise ValueError("El target solo tiene una clase. No se puede entrenar clasificacion multiclase.")
 
-    feature_cols = [c for c in df_samples.columns if c not in NON_FEATURE_COLS]
+    feature_cols, feature_meta = select_feature_columns(
+        df_samples=df_samples,
+        train_df=train_df,
+        feature_scope=feature_scope,
+    )
 
     summary_table = Table(title="Dataset max demand zone", header_style="bold cyan")
     summary_table.add_column("Campo", style="bold white")
     summary_table.add_column("Valor", justify="right")
     summary_table.add_row("input_rows", f"{len(df_panel):,}")
     summary_table.add_row("samples_hourly", f"{len(df_samples):,}")
+    summary_table.add_row("feature_scope", feature_scope)
     summary_table.add_row("feature_columns", f"{len(feature_cols):,}")
     summary_table.add_row("classes_observed", f"{len(class_labels):,}")
     summary_table.add_row("tie_hours", f"{dataset_meta['tie_hours']:,}")
@@ -562,6 +605,7 @@ def run_training(
         "n_classes_observed": int(len(class_labels)),
         "feature_columns": feature_cols,
         "class_labels": class_labels,
+        "feature_selection": feature_meta,
         "split": {
             "train_frac": train_frac,
             "val_frac": val_frac,
@@ -589,6 +633,7 @@ def run_training(
         "target_definition": "Zona pu_location_id con mayor target_n_trips por timestamp_hour",
         "top_k_values": top_k_values,
         "random_state": random_state,
+        "feature_scope": feature_scope,
         "outputs_dir": str(out_base),
         "models": reports,
     }
@@ -657,6 +702,15 @@ def main() -> None:
         action="store_true",
         help="Si se activa, no serializa los modelos entrenados.",
     )
+    parser.add_argument(
+        "--feature-scope",
+        choices=["train_winner_zones", "all"],
+        default="train_winner_zones",
+        help=(
+            "Seleccion de features por zona. "
+            "'train_winner_zones' reduce ruido usando solo zonas candidatas en train."
+        ),
+    )
     args = parser.parse_args()
 
     run_training(
@@ -669,6 +723,7 @@ def main() -> None:
         min_date=args.min_date,
         max_date=args.max_date,
         top_k_values=args.top_k,
+        feature_scope=args.feature_scope,
     )
 
 
