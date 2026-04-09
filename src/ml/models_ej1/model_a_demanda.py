@@ -42,6 +42,8 @@ from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, top_k_ac
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+from src.ml.dataset.split_dataset import split_model_demanda
+
 from config.pipeline_runner import console, print_done, print_stage
 from src.ml.dataset.modules.io import read_partitioned_parquet_dir
 
@@ -287,39 +289,6 @@ def select_feature_columns(
         "n_selected_feature_columns": int(len(selected)),
         "selected_candidate_zones": train_candidate_zones,
     }
-
-
-def split_timewise_samples(
-    df: pd.DataFrame,
-    train_frac: float = 0.70,
-    val_frac: float = 0.15,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    if train_frac <= 0 or train_frac >= 1:
-        raise ValueError("train_frac debe estar entre 0 y 1.")
-    if val_frac <= 0 or val_frac >= 1:
-        raise ValueError("val_frac debe estar entre 0 y 1.")
-    if train_frac + val_frac >= 1:
-        raise ValueError("train_frac + val_frac debe ser menor que 1.")
-
-    df = df.sort_values("timestamp_hour").reset_index(drop=True)
-    n = len(df)
-    if n < 10:
-        raise ValueError(
-            "Hay muy pocas muestras horarias para entrenar de forma fiable. "
-            f"Muestras disponibles: {n}"
-        )
-
-    n_train = int(n * train_frac)
-    n_val = int(n * val_frac)
-
-    train = df.iloc[:n_train].copy()
-    val = df.iloc[n_train:n_train + n_val].copy()
-    test = df.iloc[n_train + n_val:].copy()
-
-    if train.empty or val.empty or test.empty:
-        raise ValueError("El split temporal ha dejado un bloque vacio. Ajusta train_frac/val_frac.")
-
-    return train, val, test
 
 
 def build_models(random_state: int, train_class_count: int) -> dict[str, Pipeline]:
@@ -622,7 +591,7 @@ def run_training(
     df_panel = normalize_panel(df_raw, min_date=min_date, max_date=max_date)
     df_samples, dataset_meta = build_multiclass_dataset(df_panel)
 
-    train_df, val_df, test_df = split_timewise_samples(
+    train_df, val_df, test_df = split_model_demanda(
         df_samples,
         train_frac=train_frac,
         val_frac=val_frac,
