@@ -2,7 +2,7 @@
 import re
 import gc
 from pathlib import Path
-from typing import Callable, Dict, Tuple, Optional
+from typing import Callable, Dict, Tuple, Optional, Union, Any
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -22,9 +22,12 @@ def _extract_expected_year_month_from_filename(path: Path) -> Optional[Tuple[int
 def procesar_archivo_en_batches(
     input_path: Path, 
     output_path: Path, 
-    funcion_limpieza: Callable[[pd.DataFrame, Tuple[Optional[int], Optional[int]]], pd.DataFrame],
+    funcion_limpieza: Callable[
+        [pd.DataFrame, Tuple[Optional[int], Optional[int]]],
+        Union[pd.DataFrame, Tuple[pd.DataFrame, Dict[str, Any]]]
+    ],
     batch_size: int = 500_000
-) -> Dict[str, int]:
+) -> Dict[str, Any]:
     """
     Lee un parquet en batches, aplica la funcion_limpieza y lo guarda.
     Mantiene el uso de memoria RAM muy bajo.
@@ -32,7 +35,14 @@ def procesar_archivo_en_batches(
     pf = pq.ParquetFile(input_path)
     date = _extract_expected_year_month_from_filename(input_path)
     writer = None
-    stats = {"n_rows": 0, "n_clean_rows": 0, "null_count": 0}
+    stats = {
+        "n_rows": 0,
+        "n_clean_rows": 0,
+        "null_count": 0,
+        "changed_rows": 0,
+        "removed_rows": 0,
+        "removed_reasons": {},
+    }
     n_columns = 0
     console = Console()
 
@@ -42,8 +52,21 @@ def procesar_archivo_en_batches(
             stats["n_rows"] += len(df_batch)
             
             # Aplicamos la función inyectada (las reglas específicas del servicio)
-            df_limpio = funcion_limpieza(df_batch, date)
+            resultado_limpieza = funcion_limpieza(df_batch, date)
+            if isinstance(resultado_limpieza, tuple):
+                df_limpio, cleaning_stats = resultado_limpieza
+                cleaning_stats = cleaning_stats or {}
+            else:
+                df_limpio = resultado_limpieza
+                cleaning_stats = {}
+
             stats["n_clean_rows"] += len(df_limpio)
+            removed_rows_batch = len(df_batch) - len(df_limpio)
+            stats["removed_rows"] += int(cleaning_stats.get("removed_rows", removed_rows_batch))
+            stats["changed_rows"] += int(cleaning_stats.get("changed_rows", 0))
+            batch_reasons = cleaning_stats.get("removed_reasons", {}) or {}
+            for reason, count in batch_reasons.items():
+                stats["removed_reasons"][reason] = int(stats["removed_reasons"].get(reason, 0)) + int(count)
 
             if n_columns == 0:
                 n_columns = len(df_limpio.columns)

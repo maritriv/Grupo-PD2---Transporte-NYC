@@ -36,9 +36,13 @@ def _run_pipeline(service_name: str, input_dir: Path, output_dir: Path, cleaning
     table = Table(title=f"Resultados {service_name}")
     table.add_column("Archivo", style="cyan")
     table.add_column("Filas Conservadas", justify="right")
+    table.add_column("Filas Eliminadas", justify="right")
+    table.add_column("Filas Cambiadas", justify="right")
     table.add_column("Nulos Totales", justify="right")
     
     total_raw, total_clean = 0, 0
+    total_removed, total_changed = 0, 0
+    total_removed_reasons = {}
 
     for file_path in parquets:
         out_file = output_dir / f'{file_path.stem}.parquet'
@@ -59,12 +63,32 @@ def _run_pipeline(service_name: str, input_dir: Path, output_dir: Path, cleaning
         else:
             nulos_text = Text(f"{nulos:.2f}%", style="bold red")
 
-        table.add_row(file_path.name, prct_text, nulos_text)
+        removed_rows = int(stats.get("removed_rows", stats["n_rows"] - stats["n_clean_rows"]))
+        changed_rows = int(stats.get("changed_rows", 0))
+        removed_reasons = stats.get("removed_reasons", {}) or {}
+
+        table.add_row(file_path.name, prct_text, f"{removed_rows:,}", f"{changed_rows:,}", nulos_text)
         total_raw += stats['n_rows']
         total_clean += stats['n_clean_rows']
+        total_removed += removed_rows
+        total_changed += changed_rows
+        for reason, count in removed_reasons.items():
+            total_removed_reasons[reason] = int(total_removed_reasons.get(reason, 0)) + int(count)
 
     console.print(table)
     console.print(f"[bold green]Total {service_name}: {total_clean / total_raw * 100:.2f}% filas conservadas.[/bold green]\n")
+    console.print(
+        f"[bold cyan]Filas eliminadas:[/bold cyan] {total_removed:,} | "
+        f"[bold cyan]Filas cambiadas:[/bold cyan] {total_changed:,}\n"
+    )
+
+    if total_removed_reasons:
+        reasons_table = Table(title=f"Motivos de eliminación ({service_name})")
+        reasons_table.add_column("Motivo", style="yellow")
+        reasons_table.add_column("Filas", justify="right")
+        for reason, count in sorted(total_removed_reasons.items(), key=lambda x: x[1], reverse=True):
+            reasons_table.add_row(str(reason), f"{int(count):,}")
+        console.print(reasons_table)
 
 @click.group(help="Pipeline de la Capa 1: Validación y Limpieza de Datos TLC.")
 def cli():

@@ -21,6 +21,8 @@ DEFAULT_DATASET = (
     config.get("restaurants", {}).get("dataset_id")
     or "43nn-pn8j"
 )
+DEFAULT_START_YEAR = 2023
+DEFAULT_END_YEAR = 2025
 SOCRATA_LIMIT = int(
     config.get("restaurants", {}).get("socrata_limit")
     or 10000
@@ -241,8 +243,8 @@ def download_restaurants_month(
 
 
 def download_restaurants_range(
-    start_year: int,
-    end_year: int,
+    start_year: int = DEFAULT_START_YEAR,
+    end_year: int = DEFAULT_END_YEAR,
     start_month: int = 1,
     end_month: int = 12,
     out_dir: str | Path = DEFAULT_OUT_DIR,
@@ -280,8 +282,8 @@ def download_restaurants_range(
 
 
 @click.command()
-@click.option("--start-year", default=2024, type=int, show_default=True)
-@click.option("--end-year", default=2024, type=int, show_default=True)
+@click.option("--start-year", default=DEFAULT_START_YEAR, type=int, show_default=True)
+@click.option("--end-year", default=DEFAULT_END_YEAR, type=int, show_default=True)
 @click.option("--start-month", default=1, type=int, show_default=True)
 @click.option("--end-month", default=12, type=int, show_default=True)
 @click.option("--dataset-id", default=DEFAULT_DATASET, show_default=True)
