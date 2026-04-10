@@ -4,23 +4,36 @@ import Controls from "../components/Controls"
 import MapView from "../components/MapView"
 
 export default function Home() {
-
   const [day, setDay] = useState(2)
   const [hour, setHour] = useState(18)
   const [zones, setZones] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
 
   useEffect(() => {
     loadData()
   }, [day, hour])
 
   async function loadData() {
-    const data = await getMapData(day, hour)
-    setZones(data.zones)
+    try {
+      setLoading(true)
+      setError("")
+
+      const data = await getMapData(day, hour)
+      console.log("MAP DATA:", data)
+
+      setZones(data?.zones || [])
+    } catch (err) {
+      console.error("Error cargando mapa:", err)
+      setError("No se pudieron cargar los datos del mapa")
+      setZones([])
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
-    <div>
-
+    <div style={{ padding: "24px", fontFamily: "Arial, sans-serif" }}>
       <h1>NYC Taxi Demand</h1>
 
       <Controls
@@ -30,8 +43,10 @@ export default function Home() {
         setHour={setHour}
       />
 
-      <MapView zones={zones} />
+      {loading && <p>Cargando datos...</p>}
+      {error && <p style={{ color: "red" }}>{error}</p>}
 
+      {!loading && !error && <MapView zones={zones} />}
     </div>
   )
 }
