@@ -9,8 +9,10 @@ import HistoryChart from "../components/HistoryChart"
 const PRIMARY_COLOR = "#162a5a"
 
 export default function Home() {
-  const [day, setDay] = useState(2)
-  const [hour, setHour] = useState(18)
+  const now = new Date()
+
+  const [day, setDay] = useState(now.getDay())
+  const [hour, setHour] = useState(now.getHours())
   const [zones, setZones] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
