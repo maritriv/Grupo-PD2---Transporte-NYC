@@ -14,6 +14,7 @@ def main() -> None:
     modulos = [
         "src.extraccion.main",
         "src.procesamiento.main",
+        "src.ml.main"
     ]
 
     for m in modulos:
