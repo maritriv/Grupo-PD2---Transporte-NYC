@@ -16,17 +16,13 @@ export default function KPICards({ zones }) {
       style={{
         display: "grid",
         gridTemplateColumns: "repeat(4, 1fr)",
-        gap: "12px",
-        marginTop: "20px",
+        gap: "14px",
       }}
     >
       <Card title="Zonas analizadas" value={totalZones} />
       <Card title="Zonas críticas" value={highZones} />
       <Card title="Score medio" value={avgScore} />
-      <Card
-        title="Zona más inestable"
-        value={maxZone ? `Zona ${maxZone.zone_id}` : "-"}
-      />
+      <Card title="Zona más inestable" value={maxZone ? `Zona ${maxZone.zone_id}` : "-"} />
     </div>
   )
 }
@@ -35,15 +31,15 @@ function Card({ title, value }) {
   return (
     <div
       style={{
-        background: "white",
-        border: "1px solid #ddd",
-        borderRadius: "12px",
+        background: "linear-gradient(180deg, rgba(30,41,59,0.95), rgba(15,23,42,0.95))",
+        border: "1px solid rgba(255,255,255,0.08)",
+        borderRadius: "14px",
         padding: "16px",
-        boxShadow: "0 1px 4px rgba(0,0,0,0.05)",
+        color: "white",
       }}
     >
-      <div style={{ fontSize: "14px", color: "#666" }}>{title}</div>
-      <div style={{ fontSize: "24px", fontWeight: "bold", marginTop: "8px" }}>
+      <div style={{ fontSize: "14px", color: "#cbd5e1" }}>{title}</div>
+      <div style={{ fontSize: "28px", fontWeight: "bold", marginTop: "8px" }}>
         {value}
       </div>
     </div>

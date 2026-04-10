@@ -1,37 +1,26 @@
-export default function AlertsPanel({ zones }) {
-  const alerts = zones
-    .filter((z) => z.level === "high")
-    .sort((a, b) => b.score - a.score)
+export default function AlertsPanel({ zones, primaryColor }) {
+  const alerts = zones.filter((z) => z.level === "high")
 
   return (
     <div
       style={{
         background: "white",
-        border: "1px solid #ddd",
-        borderRadius: "12px",
-        padding: "16px",
-        boxShadow: "0 1px 4px rgba(0,0,0,0.05)",
+        border: "1px solid #e5e7eb",
+        borderRadius: "16px",
+        padding: "20px",
       }}
     >
-      <h3 style={{ marginTop: 0 }}>Alertas</h3>
+      <h3 style={{ marginTop: 0, color: primaryColor }}>
+        Alertas
+      </h3>
 
-      {alerts.length === 0 ? (
-        <p>No hay alertas activas</p>
-      ) : (
-        alerts.map((alert) => (
-          <div
-            key={alert.zone_id}
-            style={{
-              padding: "12px 0",
-              borderBottom: "1px solid #eee",
-            }}
-          >
-            <div style={{ fontWeight: "bold" }}>Zona {alert.zone_id}</div>
-            <div>Estrés alto detectado</div>
-            <small>Score: {alert.score.toFixed(2)}</small>
-          </div>
-        ))
-      )}
+      {alerts.map((z) => (
+        <div key={z.zone_id} style={{ marginBottom: "12px" }}>
+          <strong>Zona {z.zone_id}</strong>
+          <div style={{ color: "#dc2626" }}>Estrés alto</div>
+          <small>Score: {z.score.toFixed(2)}</small>
+        </div>
+      ))}
     </div>
   )
 }
