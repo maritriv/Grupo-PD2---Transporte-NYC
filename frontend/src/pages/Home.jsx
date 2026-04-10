@@ -2,6 +2,8 @@ import { useState, useEffect } from "react"
 import { getMapData } from "../api/client"
 import Controls from "../components/Controls"
 import MapView from "../components/MapView"
+import KPICards from "../components/KPICards"
+import AlertsPanel from "../components/AlertsPanel"
 
 export default function Home() {
   const [day, setDay] = useState(2)
@@ -20,8 +22,6 @@ export default function Home() {
       setError("")
 
       const data = await getMapData(day, hour)
-      console.log("MAP DATA:", data)
-
       setZones(data?.zones || [])
     } catch (err) {
       console.error("Error cargando mapa:", err)
@@ -33,7 +33,14 @@ export default function Home() {
   }
 
   return (
-    <div style={{ padding: "24px", fontFamily: "Arial, sans-serif" }}>
+    <div
+      style={{
+        padding: "24px",
+        fontFamily: "Arial, sans-serif",
+        background: "#f6f7fb",
+        minHeight: "100vh",
+      }}
+    >
       <h1>NYC Taxi Demand</h1>
 
       <Controls
@@ -46,7 +53,24 @@ export default function Home() {
       {loading && <p>Cargando datos...</p>}
       {error && <p style={{ color: "red" }}>{error}</p>}
 
-      {!loading && !error && <MapView zones={zones} />}
+      {!loading && !error && (
+        <>
+          <KPICards zones={zones} />
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "2fr 1fr",
+              gap: "20px",
+              marginTop: "20px",
+              alignItems: "start",
+            }}
+          >
+            <MapView zones={zones} />
+            <AlertsPanel zones={zones} />
+          </div>
+        </>
+      )}
     </div>
   )
 }
