@@ -270,6 +270,7 @@ Debería aparecer algo como:
 ```bash
 cd frontend
 npm install
+npm install leaflet react-leaflet
 npm run dev
 ```
 
