@@ -9,7 +9,12 @@ import pandas as pd
 from rich.table import Table
 
 from src.procesamiento.capa3.common.constants import ALLOWED_MAX_DATE, ALLOWED_MIN_DATE, console
-from src.procesamiento.capa3.common.externals import load_event_features, load_meteo_features
+from src.procesamiento.capa3.common.externals import (
+    load_event_features,
+    load_meteo_features,
+    load_rent_zone_features_yearly,
+    load_restaurants_zone_features_yearly,
+)
 from src.procesamiento.capa3.common.io import (
     iter_month_partitions,
     list_all_parquets,
@@ -61,6 +66,9 @@ MODEL_COLS = [
     "precip_mm",
     "city_n_events",
     "city_has_event",
+    "n_restaurants_zone",
+    "n_cuisines_zone",
+    "rent_price_zone",
     "z_price_variability",
     "z_log1p_num_trips",
     "stress_score",
@@ -135,6 +143,8 @@ class BuildStats:
     unique_timestamps: int = 0
     meteo_rows: int = 0
     events_rows: int = 0
+    restaurants_rows: int = 0
+    rent_rows: int = 0
     threshold_now: float = 0.0
     threshold_target: float = 0.0
 
@@ -594,6 +604,8 @@ def build_stress_zone_dataset(
     out_base: Path,
     meteo_base: Path,
     events_base: Path,
+    restaurants_base: Path,
+    rent_base: Path,
     min_date: str,
     max_date: str,
     drop_na_history: bool = True,
@@ -634,8 +646,20 @@ def build_stress_zone_dataset(
 
     df_meteo = load_meteo_features(meteo_base, min_date=min_date, max_date=max_date)
     df_events = load_event_features(events_base, min_date=min_date, max_date=max_date)
+    df_restaurants_zone = load_restaurants_zone_features_yearly(
+        restaurants_base=restaurants_base,
+        min_date=min_date,
+        max_date=max_date,
+    )
+    df_rent_zone = load_rent_zone_features_yearly(
+        rent_base=rent_base,
+        min_date=min_date,
+        max_date=max_date,
+    )
     stats.meteo_rows = len(df_meteo)
     stats.events_rows = len(df_events)
+    stats.restaurants_rows = len(df_restaurants_zone)
+    stats.rent_rows = len(df_rent_zone)
 
     model_out_dir = out_base / output_model_dataset_name
     panel_out_dir = out_base / output_panel_dataset_name
@@ -822,6 +846,17 @@ def build_stress_zone_dataset(
                 else:
                     current["borough"] = pd.NA
 
+                if df_restaurants_zone is not None and not df_restaurants_zone.empty:
+                    current = current.merge(df_restaurants_zone, on=["year", "pu_location_id"], how="left")
+                else:
+                    current["n_restaurants_zone"] = pd.NA
+                    current["n_cuisines_zone"] = pd.NA
+
+                if df_rent_zone is not None and not df_rent_zone.empty:
+                    current = current.merge(df_rent_zone, on=["year", "pu_location_id"], how="left")
+                else:
+                    current["rent_price_zone"] = pd.NA
+
                 current["hour_block_3h"] = (pd.to_numeric(current["hour"], errors="coerce") // 3).astype("Int8")
 
                 if "city_n_events" not in current.columns:
@@ -834,6 +869,15 @@ def build_stress_zone_dataset(
                     current["city_has_event"] = city_has_event
                 else:
                     current["city_has_event"] = (current["city_n_events"] > 0).astype("Int8")
+
+                for c in ["n_restaurants_zone", "n_cuisines_zone"]:
+                    if c not in current.columns:
+                        current[c] = 0.0
+                    current[c] = pd.to_numeric(current[c], errors="coerce").fillna(0.0)
+
+                if "rent_price_zone" not in current.columns:
+                    current["rent_price_zone"] = pd.NA
+                current["rent_price_zone"] = pd.to_numeric(current["rent_price_zone"], errors="coerce")
 
                 current["z_log1p_num_trips"] = _zscore_from_params(
                     np.log1p(pd.to_numeric(current["n_trips"], errors="coerce").fillna(0.0)),
@@ -954,6 +998,9 @@ def build_stress_zone_dataset(
                     "temp_c",
                     "precip_mm",
                     "city_n_events",
+                    "n_restaurants_zone",
+                    "n_cuisines_zone",
+                    "rent_price_zone",
                     "z_price_variability",
                     "z_log1p_num_trips",
                     "stress_score",

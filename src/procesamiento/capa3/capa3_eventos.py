@@ -298,8 +298,8 @@ def main():
     # Capa 2
     layer2_path = (project_root / "data" / "external" / "events" / "standarized").resolve()
 
-    # Path
-    out_base = (project_root / "data" / "aggregated" / "events").resolve()
+    # Salida capa 3 en external, alineada con meteo/rent/restaurants
+    out_base = (project_root / "data" / "external" / "events" / "aggregated").resolve()
 
     cfg = Table(show_header=True, header_style="bold white", title="Configuracion Capa3 Eventos")
     cfg.add_column("Campo", style="bold cyan")

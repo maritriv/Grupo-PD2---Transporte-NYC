@@ -201,7 +201,7 @@ def join_rent(df: pd.DataFrame, project_root: Path, base_dir: str = "data/aggreg
 def build_tip_dataset(
     tip_base_dir: str = "data/aggregated/ex1b/df_tip_trip_level",
     meteo_path: str = "data/external/meteo/aggregated/df_hour_day/data.parquet",
-    events_dir: str = "data/aggregated/events/df_borough_hour_day",
+    events_dir: str = "data/external/events/aggregated/df_borough_hour_day",
     zone_lookup_path: str = "data/external/taxi_zone_lookup.csv",
     out_path: str = "data/aggregated/ex1b/df_tip_dataset/data.parquet",
     date_from: str | None = None,

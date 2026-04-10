@@ -43,6 +43,16 @@ def main() -> None:
         help="Ruta eventos estandarizada",
     )
     p.add_argument(
+        "--restaurants-dir",
+        default=str(obtener_ruta("data/external/restaurants/aggregated/df_location_static")),
+        help="Ruta restaurants agregada por pu_location_id",
+    )
+    p.add_argument(
+        "--rent-dir",
+        default=str(obtener_ruta("data/external/rent/aggregated/df_location_static")),
+        help="Ruta rent agregada por pu_location_id",
+    )
+    p.add_argument(
         "--zone-lookup",
         default=str(obtener_ruta("data/external/taxi_zone_lookup.csv")),
         help="CSV de lookup de zonas TLC",
@@ -87,6 +97,8 @@ def main() -> None:
     out_base = Path(args.out_dir).resolve()
     meteo_base = Path(args.meteo_dir).resolve()
     events_base = Path(args.events_dir).resolve()
+    restaurants_base = Path(args.restaurants_dir).resolve()
+    rent_base = Path(args.rent_dir).resolve()
     zone_lookup_path = str(Path(args.zone_lookup).resolve())
 
     cfg = Table(show_header=True, header_style="bold white", title="Configuracion EX Stress")
@@ -96,6 +108,8 @@ def main() -> None:
     cfg.add_row("out_dir", str(out_base))
     cfg.add_row("meteo_dir", str(meteo_base))
     cfg.add_row("events_dir", str(events_base))
+    cfg.add_row("restaurants_dir", str(restaurants_base))
+    cfg.add_row("rent_dir", str(rent_base))
     cfg.add_row("zone_lookup", zone_lookup_path)
     cfg.add_row("min_date", args.min_date)
     cfg.add_row("max_date", args.max_date)
@@ -121,6 +135,8 @@ def main() -> None:
         out_base=out_base,
         meteo_base=meteo_base,
         events_base=events_base,
+        restaurants_base=restaurants_base,
+        rent_base=rent_base,
         min_date=args.min_date,
         max_date=args.max_date,
         drop_na_history=not args.keep_na_history,
@@ -144,6 +160,8 @@ def main() -> None:
     summary.add_row("unique_timestamps", f"{stats.unique_timestamps:,}")
     summary.add_row("meteo_rows", f"{stats.meteo_rows:,}")
     summary.add_row("events_rows", f"{stats.events_rows:,}")
+    summary.add_row("restaurants_rows", f"{stats.restaurants_rows:,}")
+    summary.add_row("rent_rows", f"{stats.rent_rows:,}")
     summary.add_row("threshold_now", f"{stats.threshold_now:.4f}")
     summary.add_row("threshold_target", f"{stats.threshold_target:.4f}")
     console.print(summary)
