@@ -29,6 +29,7 @@ FINAL_RESTAURANTS_COLUMNS = [
 ]
 
 KNOWN_BOROUGHS = {"Bronx", "Brooklyn", "Manhattan", "Queens", "Staten Island"}
+KNOWN_GRADES = {"A", "B", "C", "N", "P", "Z", "G"}
 
 
 def _pick_first_series(df: pd.DataFrame, candidates: list[str]) -> pd.Series:
@@ -119,16 +120,24 @@ def clean_restaurants_batch(df: pd.DataFrame, date_file: Optional[Tuple[int, int
     df["critical_flag"] = df["critical_flag"].str.upper()
     df["grade"] = df["grade"].str.upper()
 
-    for c in ["inspection_date", "grade_date", "record_date"]:
+    # record_date se conserva como dato auxiliar, pero no se usa como tiempo analitico.
+    for c in ["inspection_date", "grade_date"]:
         df[c] = pd.to_datetime(df[c], errors="coerce")
 
     mask_id = df["camis"].notna()
     mask_date = df["inspection_date"].notna()
     mask_borough = df["borough"].isin(KNOWN_BOROUGHS)
-    mask_lat = df["latitude"].isna() | ((df["latitude"] >= 40.4) & (df["latitude"] <= 41.0))
-    mask_lon = df["longitude"].isna() | ((df["longitude"] >= -74.3) & (df["longitude"] <= -73.6))
+    # Coordenadas obligatorias y validas (no nulas) para poder mapear a zonas.
+    mask_lat = df["latitude"].notna() & (df["latitude"] >= 40.4) & (df["latitude"] <= 41.0)
+    mask_lon = df["longitude"].notna() & (df["longitude"] >= -74.3) & (df["longitude"] <= -73.6)
     mask_score = df["score"].isna() | ((df["score"] >= 0) & (df["score"] <= 200))
+    mask_grade = df["grade"].isna() | df["grade"].isin(KNOWN_GRADES)
 
-    df_clean = df[mask_id & mask_date & mask_borough & mask_lat & mask_lon & mask_score].copy()
-    df_clean = df_clean.drop_duplicates().reset_index(drop=True)
+    df_clean = df[mask_id & mask_date & mask_borough & mask_lat & mask_lon & mask_score & mask_grade].copy()
+    # Una sola fila por restaurante: inspeccion mas reciente por CAMIS.
+    df_clean = (
+        df_clean.sort_values(["inspection_date", "camis"], ascending=[True, True])
+        .drop_duplicates(subset=["camis"], keep="last")
+        .reset_index(drop=True)
+    )
     return df_clean[FINAL_RESTAURANTS_COLUMNS]

@@ -18,10 +18,12 @@ GET_THE_DATA_URL = "https://insideairbnb.com/get-the-data/"
 TIMEOUT = 120
 DEFAULT_OUT_DIR = obtener_ruta("data/external/rent/raw")
 DEFAULT_TAG = "rent_insideairbnb"
+DEFAULT_START_YEAR = 2023
+DEFAULT_END_YEAR = 2024
+MAX_ACS_YEAR_AVAILABLE = 2024
 
 PRICE_MAX_REASONABLE = 10_000.0
-ACS_YEAR = 2024
-ACS_API_URL = f"https://api.census.gov/data/{ACS_YEAR}/acs/acs5"
+ACS_API_URL_TEMPLATE = "https://api.census.gov/data/{year}/acs/acs5"
 ACS_RENT_VAR = "B25064_001E"
 ACS_RENT_MOE_VAR = "B25064_001M"
 TIGER_TRACTS_URL = (
@@ -44,6 +46,17 @@ class RentSource:
     snapshot_date: str
     dataset_kind: str
     calendar_url: Optional[str] = None
+
+
+def _acs_api_url(year: int) -> str:
+    return ACS_API_URL_TEMPLATE.format(year=year)
+
+
+def _extract_year_from_snapshot(snapshot_date: str) -> int:
+    match = re.search(r"(\d{4})", snapshot_date)
+    if not match:
+        raise ValueError(f"No se pudo extraer año de snapshot_date={snapshot_date!r}")
+    return int(match.group(1))
 
 
 def _download_file(url: str, out_path: Path) -> None:
@@ -240,7 +253,7 @@ def _resolve_rent_source(url: Optional[str], dataset_kind: str) -> RentSource:
     return _discover_latest_insideairbnb_nyc(dataset_kind=dataset_kind)
 
 
-def _dataset_is_current(final_parquet: Path, source: RentSource) -> bool:
+def _dataset_is_current(final_parquet: Path, sources: list[RentSource]) -> bool:
     if not final_parquet.exists():
         return False
 
@@ -252,19 +265,30 @@ def _dataset_is_current(final_parquet: Path, source: RentSource) -> bool:
     if df_existing.empty:
         return False
 
-    current_url = str(df_existing["source_url"].iloc[0]) if "source_url" in df_existing.columns else None
-    current_snapshot = (
-        str(df_existing["source_snapshot_date"].iloc[0])
-        if "source_snapshot_date" in df_existing.columns
-        else None
+    current_urls = (
+        set(df_existing["source_url"].dropna().astype("string").tolist())
+        if "source_url" in df_existing.columns
+        else set()
     )
+    current_snapshots = (
+        set(df_existing["source_snapshot_date"].dropna().astype("string").tolist())
+        if "source_snapshot_date" in df_existing.columns
+        else set()
+    )
+    expected_urls = {source.url for source in sources}
+    expected_snapshots = {source.snapshot_date for source in sources}
     price_non_null = int(_coerce_price(df_existing["price"], df_existing.index).notna().sum())
 
-    return current_url == source.url and current_snapshot == source.snapshot_date and price_non_null > 0
+    return (
+        current_snapshots == expected_snapshots
+        and expected_urls.issubset(current_urls)
+        and price_non_null > 0
+    )
 
 
-def _download_acs_rent_snapshot() -> pd.DataFrame:
+def _download_acs_rent_snapshot(acs_year: int) -> pd.DataFrame:
     rows: list[pd.DataFrame] = []
+    acs_api_url = _acs_api_url(acs_year)
 
     for county_code, borough in NYC_COUNTIES.items():
         params = {
@@ -272,7 +296,7 @@ def _download_acs_rent_snapshot() -> pd.DataFrame:
             "for": "tract:*",
             "in": f"state:36 county:{county_code}",
         }
-        resp = requests.get(ACS_API_URL, params=params, timeout=TIMEOUT)
+        resp = requests.get(acs_api_url, params=params, timeout=TIMEOUT)
         resp.raise_for_status()
         payload = resp.json()
 
@@ -297,7 +321,7 @@ def _download_acs_rent_snapshot() -> pd.DataFrame:
     centroids = _download_tiger_tract_centroids()
     df = df.merge(centroids, on="zone_id", how="left")
 
-    df["source_snapshot_date"] = f"{ACS_YEAR}-acs5"
+    df["source_snapshot_date"] = f"{acs_year}-acs5"
     df["neighborhood"] = df["NAME"]
     df["room_type"] = "All Rentals"
     df["property_type"] = "Census Tract"
@@ -439,6 +463,8 @@ def download_rent_snapshot(
     dataset_kind: str = "summary",
     force: bool = False,
     provider: str = "acs",
+    start_year: int = DEFAULT_START_YEAR,
+    end_year: int = DEFAULT_END_YEAR,
 ) -> dict[str, Any]:
     """
     Descarga un snapshot de alquiler de NYC y lo guarda en parquet.
@@ -455,42 +481,77 @@ def download_rent_snapshot(
         raise ValueError(f"provider no soportado: {provider}")
 
     if provider == "acs":
-        source = RentSource(
-            url=ACS_API_URL,
-            snapshot_date=f"{ACS_YEAR}-acs5",
-            dataset_kind="acs_tract",
-            calendar_url=None,
-        )
+        if start_year > MAX_ACS_YEAR_AVAILABLE:
+            raise ValueError(
+                f"ACS NYC no disponible para start_year={start_year}. "
+                f"Último año disponible: {MAX_ACS_YEAR_AVAILABLE}"
+            )
+        if end_year > MAX_ACS_YEAR_AVAILABLE:
+            console.print(
+                f"[yellow]Aviso:[/yellow] ACS NYC no disponible para {end_year}. "
+                f"Se usará {MAX_ACS_YEAR_AVAILABLE} como año final."
+            )
+            end_year = MAX_ACS_YEAR_AVAILABLE
+
+        if start_year > end_year:
+            raise ValueError("start_year no puede ser mayor que end_year")
+
+        sources = [
+            RentSource(
+                url=_acs_api_url(year),
+                snapshot_date=f"{year}-acs5",
+                dataset_kind="acs_tract",
+                calendar_url=None,
+            )
+            for year in range(start_year, end_year + 1)
+        ]
     else:
-        source = _resolve_rent_source(url=url, dataset_kind=dataset_kind)
+        sources = [_resolve_rent_source(url=url, dataset_kind=dataset_kind)]
+
+    source = sources[0]
 
     final_parquet = out_dir / f"{tag}.parquet"
     tmp_download = out_dir / f"__tmp_{tag}{Path(source.url.split('?')[0]).suffix}"
     tmp_parquet = out_dir / f"__tmp_{tag}.parquet"
     tmp_calendar = out_dir / f"__tmp_{tag}_calendar.csv.gz"
 
-    if not force and _dataset_is_current(final_parquet, source):
+    if not force and _dataset_is_current(final_parquet, sources):
         console.print(
             f"[yellow]SKIP:[/yellow] {final_parquet.name} ya está alineado con "
-            f"{source.dataset_kind} {source.snapshot_date}"
+            f"{source.dataset_kind} {', '.join(s.snapshot_date for s in sources)}"
         )
         return {
-            "successful": 1,
-            "total": 1,
-            "skipped": 1,
+            "successful": 0,
+            "total": len(sources),
+            "skipped": len(sources),
             "failed": 0,
-            "snapshot_date": source.snapshot_date,
-            "dataset_kind": source.dataset_kind,
+            "snapshot_dates": [s.snapshot_date for s in sources],
+            "dataset_kind": source.dataset_kind if len(sources) == 1 else "acs_tract",
             "rows": None,
         }
 
     try:
         if provider == "acs":
-            console.print(
-                "[dim]  -> Descargando renta residencial por tracto censal desde ACS/TIGERweb...[/dim]"
-            )
-            df = _download_acs_rent_snapshot()
-            stats = _validate_rent_snapshot(df, source)
+            frames: list[pd.DataFrame] = []
+            for source_acs in sources:
+                acs_year = _extract_year_from_snapshot(source_acs.snapshot_date)
+                console.print(
+                    "[dim]  -> Descargando renta residencial por tracto censal "
+                    f"desde ACS/TIGERweb ({acs_year})...[/dim]"
+                )
+                df_year = _download_acs_rent_snapshot(acs_year)
+                _validate_rent_snapshot(df_year, source_acs)
+                df_year["source_url"] = source_acs.url
+                df_year["source_snapshot_date"] = source_acs.snapshot_date
+                df_year["source_dataset_kind"] = source_acs.dataset_kind
+                df_year["source_city"] = "new-york-city"
+                frames.append(df_year)
+
+            df = pd.concat(frames, ignore_index=True).drop_duplicates(ignore_index=True)
+            stats = {
+                "rows": int(len(df)),
+                "price_non_null": int(_coerce_price(df["price"], df.index).notna().sum()),
+            }
         else:
             _download_file(source.url, tmp_download)
 
@@ -507,10 +568,11 @@ def download_rent_snapshot(
 
             stats = _validate_rent_snapshot(df, source)
 
-        df["source_url"] = source.url
-        df["source_snapshot_date"] = source.snapshot_date
-        df["source_dataset_kind"] = source.dataset_kind
-        df["source_city"] = "new-york-city"
+        if provider != "acs":
+            df["source_url"] = source.url
+            df["source_snapshot_date"] = source.snapshot_date
+            df["source_dataset_kind"] = source.dataset_kind
+            df["source_city"] = "new-york-city"
 
         df.to_parquet(tmp_parquet, engine="pyarrow", index=False)
         tmp_parquet.replace(final_parquet)
@@ -524,18 +586,19 @@ def download_rent_snapshot(
     console.print(
         f"[green]OK:[/green] {final_parquet.name} "
         f"({stats['rows']} filas, price_non_null={stats['price_non_null']}, "
-        f"snapshot={source.snapshot_date}, kind={source.dataset_kind})"
+        f"snapshots={', '.join(s.snapshot_date for s in sources)}, "
+        f"kind={source.dataset_kind if len(sources) == 1 else 'acs_tract'})"
     )
 
     return {
-        "successful": 1,
-        "total": 1,
+        "successful": len(sources),
+        "total": len(sources),
         "skipped": 0,
         "failed": 0,
         "rows": stats["rows"],
         "price_non_null": stats["price_non_null"],
-        "snapshot_date": source.snapshot_date,
-        "dataset_kind": source.dataset_kind,
+        "snapshot_dates": [s.snapshot_date for s in sources],
+        "dataset_kind": source.dataset_kind if len(sources) == 1 else "acs_tract",
     }
 
 
@@ -543,6 +606,8 @@ def download_rent_snapshot(
 @click.option("--url", default=None, help="URL manual de Inside Airbnb. Si se pasa, fuerza el proveedor `insideairbnb`.")
 @click.option("--out-dir", default=None, help="Ruta destino (si no se pasa, usa la de settings)")
 @click.option("--tag", default=DEFAULT_TAG, show_default=True, help="Nombre base del parquet final")
+@click.option("--start-year", default=DEFAULT_START_YEAR, show_default=True, type=int, help="Año inicial para ACS")
+@click.option("--end-year", default=DEFAULT_END_YEAR, show_default=True, type=int, help="Año final para ACS")
 @click.option(
     "--provider",
     type=click.Choice(["acs", "insideairbnb"]),
@@ -562,6 +627,8 @@ def main(
     url: Optional[str],
     out_dir: Optional[str],
     tag: str,
+    start_year: int,
+    end_year: int,
     provider: str,
     dataset_kind: str,
     force: bool,
@@ -581,6 +648,8 @@ def main(
         url=url,
         out_dir=out_path,
         tag=tag,
+        start_year=start_year,
+        end_year=end_year,
         provider=provider,
         dataset_kind=dataset_kind,
         force=force,
