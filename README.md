@@ -246,6 +246,39 @@ curl -o data\external\taxi_zone_lookup.csv https://d37ci6vzurychx.cloudfront.net
 ```
 ----
 
+## Ejecución de la página web
+
+**1. Abre una terminal en la raíz del proyecto y ejecuta:
+```bash
+uv run -m uvicorn backend.app.main:app --reload
+```
+
+Si arranca bien, aparecerá una linea parecida a:
+```bash
+Uvicorn running on http://127.0.0.1:8000
+```
+Busca en el navegador:
+```bash 
+http://127.0.0.1:8000/api/health
+```
+
+Debería aparecer algo como:
+`{"status":"ok"}`
+
+
+**2. Abre otra terminal y ejecuta:**
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Si va bien, Vite te dará una URL, normalmente:
+```bash
+http://localhost:5173
+```
+Abre esa dirección en el navegador.
+
 ## Equipo de desarrollo
 
 Este proyecto fue desarrollado por los siguientes estudiantes del Grado en Ingeniería de Datos e Inteligencia Artificial (UCM): 
