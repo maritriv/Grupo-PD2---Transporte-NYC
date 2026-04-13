@@ -1,309 +1,364 @@
-# Capa 3: agregados de demanda y variabilidad de precio
+# Capa 3: Agregaciones y Datasets para Analítica y Modelos ML
+
+## 1. Descripcion general
+
+La Capa 3 es la capa de agregación final que transforma los datos estandarizados de la Capa 2 en tablas resumidas y datasets model-ready para análisis y machine learning.
+
+Su propósito es:
+- Generar agregados base reutilizables (demanda diaria, hotspots, variabilidad de precio)
+- Construir datasets específicos para cada ejercicio/modelo de negocio
+- Enriquecer datos de TLC con datos externos (meteorología, eventos, alquiler, restaurantes)
+- Mantener separación clara entre análisis exploratorio y datasets para modelado
+
+La arquitectura de Capa 3 se organiza en dos pasos secuenciales:
+1. Paso 1: Generación de agregados base (reutilizables, independientes entre sí)
+2. Paso 2: Ensamblaje de datasets para ejercicios (dependen de Paso 1, contienen lógica específica)
+
+
+## 2. Arquitectura y estructura
+
+### 2.1 Organización de directorios
+
+```
+src/procesamiento/capa3/
+├── main.py                          # Orquestador principal (2 pasos)
+├── aggregates/                      # Paso 1: Agregados base
+│   ├── __init__.py
+│   ├── tlc.py                       # Agregados TLC (demanda, hotspots, variabilidad)
+│   ├── eventos.py                   # Agregados de eventos urbanos
+│   ├── meteo.py                     # Agregados de meteorología
+│   ├── rent.py                      # Datos estáticos de alquiler por zona
+│   └── restaurants.py               # Datos estáticos de restaurantes por zona
+├── ejercicios/                      # Paso 2: Datasets para ejercicios
+│   ├── __init__.py
+│   ├── ex1a_demand.py               # Ej.1a: Predicción de zona máxima demanda
+│   ├── ex1b_tips.py                 # Ej.1b: Predicción de propina
+│   ├── ex1c_patterns.py             # Ej.1c: Patrones de demanda (bajo/medio/alto)
+│   ├── ex1d_socioeconomic.py        # Ej.1d: Poder adquisitivo por zona
+│   └── ex2_stress.py                # Ej.2: Dashboard de estrés urbano
+├── builders/                        # Lógica compleja para ensamblaje de features
+│   ├── __init__.py
+│   ├── demand_zone.py               # Constructor de dataset demanda (ex1a)
+│   ├── propinas.py                  # Constructor de features de propina (ex1b)
+│   └── stress_zone.py               # Constructor de dataset estrés (ex2)
+├── pipelines/                       # Orquestadores de builders
+│   ├── __init__.py
+│   ├── run_demand_zone.py           # Ejecutor de builder demand_zone
+│   └── run_stress_zone.py           # Ejecutor de builder stress_zone
+└── common/                          # Utilidades compartidas
+    ├── __init__.py
+    ├── constants.py                 # Configuración global (fechas, console)
+    ├── io.py                        # Lectura/escritura particionada, utilidades FS
+    └── externals.py                 # Carga de datos externos (meteo, eventos, etc.)
+```
 
-La capa 3 toma como entrada la capa 2 estandarizada de viajes de taxi y genera varios DataFrames agregados que resumen:
-- Cómo evoluciona la demanda y el precio por día y tipo de servicio.
-- Cuáles son las combinaciones zona–hora–día con más actividad y precios más altos.
-- En qué zonas y horas el precio es más impredecible (alta variabilidad).
+### 2.2 Flujo de ejecución
 
-Incluye además un script de inspección para revisar rápidamente la calidad de estos agregados.
+Cuando se ejecuta main.py:
 
----
+Paso 1: Agregados base (independientes)
+- Cada script carga datos de su fuente (TLC, eventos, etc.)
+- Realiza agregaciones específicas
+- Guarda salidas particionadas
+- Sin dependencias entre ellos (ejecución parallelizable)
 
-## 1. Script `capa3.py`: construcción de la capa 3
+Paso 2: Datasets ejercicios (dependen de Paso 1)
+- Leen agregados base o construyen nuevas features
+- Combinan múltiples fuentes (ex: ex1a combina TLC + meteo + eventos + rent)
+- Generan datasets model-ready
+- Cada uno orientado a una tarea concreta
 
-### Objetivo
 
-A partir de la capa 2 (`data/standarized`), crear y guardar cuatro tablas de agregados en `data/aggregated`:
+## 3. Detalle de componentes
 
-1. `df_daily_service`: evolución diaria por tipo de servicio.
-2. `df_zone_hour_day_global`: “hotspots” por zona y hora (global, mezclando servicios).
-3. `df_zone_hour_day_service`: “hotspots” por zona, hora y tipo de servicio.
-4. `df_variability`: variabilidad de precio por zona, hora y servicio (IQR + score de negocio).
+### 3.1 Paso 1: Agregados Base
 
-### Sesión de Spark
+#### aggregates/tlc.py
 
-La función `get_spark`:
+Lee datos estandarizados de TLC y genera agregados de demanda y variabilidad:
 
-- Crea una sesión Spark con nombre `"PD2-Capa3"`.
-- Usa modo local (`local[*]`) con 6 GB de memoria para driver y executor.
-- Ajusta `spark.sql.shuffle.partitions` a 200.
-- Fija la zona horaria a `"America/New_York"`.
-- Reduce los logs a nivel `WARN`.
+Entrada: data/standarized/ (Capa 2 TLC particionada por year/month/service_type)
 
----
+Salidas en data/aggregated/:
 
-### 1. Lectura de la capa 2 con higiene mínima
+1. df_daily_service/
+   - Nivel: date + service_type
+   - Campos: num_trips, avg_price, std_price, unique_zones
+   - Uso: Evolución temporal de demanda y precios
 
-La función `read_layer2`:
+2. df_zone_hour_day_global/
+   - Nivel: pu_location_id + hour + date (sin separar servicios)
+   - Campos: num_trips, avg_price, std_price
+   - Filtro: num_trips >= 30 (confiabilidad mínima)
+   - Uso: Identificar hotspots por zona-hora-día
 
-- Lee la capa 2 desde `data/standarized` (ruta configurable con `layer2_path`).
-- Aplica filtros “defensivos” para garantizar datos limpios antes de agregar:
-  - Elimina filas con nulos en:
-    - `date`
-    - `hour`
-    - `service_type`
-    - `pu_location_id`
-    - `total_amount_std`.
-  - Limita el rango temporal:
-    - Solo mantiene filas con `date` entre `min_date` y `max_date` (por defecto de 2019-01-01 a 2024-12-31, en `main` se acota a 2024-03-01).
-  - Limpia el precio:
-    - Quita viajes con `total_amount_std` menor o igual a 0 (refunds o errores).
-    - Quita viajes con `total_amount_std` mayor o igual que `cap_max_price` (ej. 500), para evitar outliers extremos.
+3. df_zone_hour_day_service/
+   - Nivel: pu_location_id + hour + date + service_type
+   - Campos: num_trips, avg_price, std_price
+   - Filtro: num_trips >= 30
+   - Uso: Comparar servicios (yellow vs green vs fhvhv) en misma zona-hora-día
 
-Resultado: un DataFrame de capa 2 listo para agregaciones estables.
+4. df_variability/
+   - Nivel: pu_location_id + hour + service_type (agregado temporal)
+   - Campos: num_trips, avg_price, price_variability (IQR), biz_score
+   - Filtro: num_trips >= 100 (mínimo para estimar percentiles)
+   - Uso: Identificar zonas-horas con precio impredecible
 
----
+Parámetros configurables:
+- min_date, max_date (rango temporal)
+- cap_max_price (corte de outliers, default: 500)
+- min_trips_df2 (mínimo para hotspots, default: 30)
+- min_trips_df3 (mínimo para variabilidad, default: 100)
 
-### 2. Construcción de los agregados de capa 3
+#### aggregates/eventos.py
 
-La función `build_layer3` recibe el DataFrame de capa 2 ya filtrado y dos umbrales:
+Lee eventos urbanos estandarizados y genera agregados por zona-hora-día.
 
-- `min_trips_df2`: mínimo de viajes para considerar una combinación zona–hora–día fiable (por defecto 30).
-- `min_trips_df3`: mínimo de viajes para estimar bien la variabilidad por zona–hora–servicio (por defecto 100).
+Salidas en data/external/events/aggregated/:
+- df_borough_hour_day: Eventos por borough, hora y día
+- df_daily_borough: Eventos por borough y día
+- df_type_daily_borough: Ranking de tipos de evento
+- df_hourly_pattern: Patrón horario medio por borough
 
-A partir de esto genera cuatro DataFrames.
+#### aggregates/meteo.py
 
-#### 2.1 `df_daily_service`: evolución diaria por servicio
+Lee datos meteorológicos estandarizados.
 
-Agrupa por `date` y `service_type` y calcula:
+Salidas en data/external/meteo/aggregated/:
+- Datos meteorológicos agregados disponibles para enriquecer modelos
 
-- `num_trips`: número de viajes ese día y servicio.
-- `avg_price`: precio medio (`total_amount_std`).
-- `std_price`: desviación estándar del precio.
-- `unique_zones`: número de zonas de origen distintas (`pu_location_id`).
+#### aggregates/rent.py y aggregates/restaurants.py
 
-Sirve para ver:
+Leen datos estáticos de rent y restaurantes agregados por zona TLC.
 
-- Volumen por día y tipo de servicio.
-- Cómo cambian los precios medios a lo largo del tiempo.
-- Qué tan disperso es el precio cada día.
-- Cuánta variedad de zonas se activa cada día para cada servicio.
+Salidas en data/external/{rent,restaurants}/aggregated/:
+- Datos estáticos por pu_location_id (zona)
 
-#### 2.2 `df_zone_hour_day_global`: hotspots zona–hora–día (global)
 
-Agrupa por `pu_location_id`, `hour` y `date` (sin separar por servicio) y calcula:
+### 3.2 Paso 2: Datasets Ejercicios
 
-- `num_trips`: viajes en esa zona–hora–día.
-- `avg_price`: precio medio en esa combinación.
-- `std_price`: desviación estándar del precio.
+#### ejercicios/ex1a_demand.py
 
-Después aplica un filtro:
+Ej.1a: Predecir la zona de máxima demanda para un día/hora
 
-- Solo conserva filas con `num_trips >= min_trips_df2` (por defecto, al menos 30 viajes).
+Wrapper que ejecuta pipelines/run_demand_zone.py
 
-Uso típico:
+Entrada: TLC (capa 2) + meteorología + eventos + rent + restaurantes
 
-- Encontrar las combinaciones zona–hora–día con más actividad de taxi en general.
-- Ver en qué momentos el precio medio es más alto.
-- Detectar zonas/horas con comportamiento raro en precio.
+Salida: data/aggregated/ex1a/df_demand_zone_hour_day/
 
-#### 2.3 `df_zone_hour_day_service`: hotspots zona–hora–día por servicio
+Campos:
+- Temporales: date, year, month, hour, hour_block (franjas de 3h), day_of_week, is_weekend, week_of_year
+- Geográficos: pu_location_id
+- Features de demanda histórica: lag_1h, lag_24h, lag_168h (rezagos de demanda)
+- Features de tendencia: rolling_mean_3h, rolling_mean_24h
+- Variables externas: temp_c, precip_mm, city_n_events, city_has_event, n_restaurants_zone, rent_price_zone
+- Target: target_n_trips (número de viajes en esa zona-hora)
 
-Similar a la anterior, pero separando por tipo de servicio:
+Lógica en builders/demand_zone.py
 
-- Agrupa por `pu_location_id`, `hour`, `date`, `service_type`.
-- Calcula `num_trips`, `avg_price`, `std_price`.
-- Aplica el mismo filtro de mínimo de viajes (`num_trips >= min_trips_df2`).
 
-Esto permite:
+#### ejercicios/ex1b_tips.py
 
-- Comparar taxis tradicionales vs VTC en la misma zona–hora–día.
-- Ver si los precios medios y la variabilidad difieren mucho por servicio.
-- Detectar posiciones competitivas (ej. dónde un servicio domina en volumen).
+Ej.1b: Predecir propina de un viaje individual
 
-#### 2.4 `df_variability`: variabilidad de precio (IQR) por zona–hora–servicio
+Entrada: TLC capa 2 a nivel viaje
 
-Aquí se busca medir **qué tan impredecible** es el precio en una zona y hora para cada tipo de servicio.
+Salida: data/aggregated/ex1b/df_trip_level_tips/ (particionado por year/month)
 
-Pasos:
+Campos:
+- Identificadores: service_type, pickup_datetime, dropoff_datetime, pu_location_id, do_location_id
+- Temporales: date, year, month, hour, day_of_week, is_weekend, week_of_year
+- Viaje: trip_distance, trip_duration_min, passenger_count, payment_type, RatecodeID
+- Económicos: total_amount_std, fare_amount
+- Targets: target_tip_amount, target_tip_pct, has_tip (binario)
 
-1. Agrupa por `pu_location_id`, `hour`, `service_type`.
-2. Calcula:
-   - `num_trips`: número de viajes en esa zona–hora–servicio.
-   - `avg_price`: precio medio.
-   - `p75`: percentil 75 del precio.
-   - `p25`: percentil 25 del precio (ambos con `percentile_approx`).
-3. Define `price_variability` como `p75 - p25` (rango intercuartílico, IQR). Cuanto más alto, más dispersos los precios.
-4. Filtra:
-   - Solo se quedan combinaciones con `num_trips >= min_trips_df3` (por defecto, al menos 100 viajes), para asegurar que el IQR es fiable.
-5. Elimina las columnas temporales `p75` y `p25`, dejando `price_variability` como métrica estable.
-6. Calcula un **score de negocio** `biz_score`:
-   - `biz_score = price_variability * log1p(num_trips)`.
-   - La idea es combinar variabilidad alta y volumen alto.
-   - `log1p` (logaritmo de `1 + num_trips`) hace que el volumen grande cuente, pero sin que eclipsa totalmente a la variabilidad.
+Filtros de calidad:
+- is_valid_for_tip == 1
+- fare_amount > 0
+- No nulos en campos críticos
 
-Este DataFrame permite priorizar:
+Arquitectura: Pandas (lectura eficiente de particiones mensuales)
 
-- Zonas/horas/servicios donde el precio es muy variable y hay mucho tráfico.
-- Potenciales oportunidades de negocio (por ejemplo, segmentos donde un buen modelo de predicción de precio aporta más valor).
 
----
+#### ejercicios/ex1c_patterns.py
 
-### 3. Guardado de la capa 3
+Ej.1c: Identificar patrones de demanda por zona-hora
 
-La función `save_layer3` guarda cada DataFrame en formato Parquet bajo `data/aggregated` (ruta configurable con `out_base`):
+Clasifica demanda en niveles (Baja/Media/Alta) según zona y franja horaria.
+Agrega análisis de estabilidad (predecibilidad de demanda).
 
-- `df_daily_service`:
-  - Ruta: `data/aggregated/df_daily_service`.
-  - Particionado por `service_type`.
-- `df_zone_hour_day_global`:
-  - Ruta: `data/aggregated/df_zone_hour_day_global`.
-  - Particionado por `date`.
-- `df_zone_hour_day_service`:
-  - Ruta: `data/aggregated/df_zone_hour_day_service`.
-  - Particionado por `date` y `service_type`.
-- `df_variability`:
-  - Ruta: `data/aggregated/df_variability`.
-  - Particionado por `service_type`.
+Entrada: data/aggregated/df_zone_hour_day_global (agregado TLC)
 
-Usa modo `overwrite` en todos los casos, reemplazando el contenido existente. Al final imprime un resumen con las rutas de salida.
+Salida: data/aggregated/ex1c/df_demand_patterns/ (particionado por pu_location_id)
 
----
+Lógica:
+1. Agrega zona-hora promediando sobre fechas (obtiene demanda media por zona-hora)
+2. Clasifica demanda en terciles POR ZONA (respeta naturaleza local):
+   - Baja: < percentil 33 de trips en esa zona
+   - Media: percentil 33-66
+   - Alta: > percentil 66
+3. Calcula coeficiente de variación (CV) como medida de estabilidad
+4. Clasifica estabilidad en terciles globales:
+   - Predecible: CV bajo (demanda consistente)
+   - Variable: CV medio
+   - Volátil: CV alto (demanda impredecible)
+5. Calcula puntuación de prioridad operacional (demanda × estabilidad)
 
-### 4. Flujo completo (`main` de `capa3.py`)
+Campos de salida:
+- pu_location_id, hour
+- num_trips_avg, num_trips_std, num_trips_min, num_trips_max, num_trips_count
+- demand_level, stability, cv, operational_priority, operational_priority_label
 
-La función `main` encadena todo el proceso:
+Uso: Identificar zonas-horas confiables vs riesgosas para operación
 
-1. Crea la sesión Spark con `get_spark`.
-2. Lee y limpia la capa 2 con `read_layer2`, acotando fechas entre 2019-01-01 y 2024-03-01, y precio máximo 500.
-3. Llama a `build_layer3` para obtener:
-   - `df1` = `df_daily_service`.
-   - `df2a` = `df_zone_hour_day_global`.
-   - `df2b` = `df_zone_hour_day_service`.
-   - `df3` = `df_variability`.
-4. Si `DEBUG` está a `True`, muestra pequeñas muestras ordenadas para revisar a mano.
-5. Guarda todos los DataFrames con `save_layer3`.
-6. Cierra la sesión Spark.
 
-Al ejecutar `python capa3.py`, se pone en marcha este flujo completo.
+#### ejercicios/ex1d_socioeconomic.py
 
----
+Ej.1d: Caracterizar poder adquisitivo por zona
 
-## 2. Script `inspect_capa3.py`: inspección de la capa 3
+Mapeo de nivel socioeconómico usando datos de taxis (propinas, pasajeros, volumen).
 
-### Objetivo
+Entrada: Agregados TLC (df_daily_service) + propinas agregadas
 
-Permitir una **revisión rápida y guiada** de los cuatro DataFrames agregados de capa 3:
+Salida: data/aggregated/ex1d/df_zone_socioeconomic/
 
-- Ver esquema, conteos y muestras.
-- Revisar rangos temporales y nulos.
-- Detectar combinaciones con más viajes, precios medios más altos y mayor variabilidad.
-- Validar que las horas están bien (0–23) y que no hay valores raros.
+Uso: Generar mapa coroplético de poder adquisitivo con colores por zona
 
-### Sesión de Spark y utilidades
+Nota: Requiere implementación específica (stub actualmente)
 
-- `get_spark`: crea una sesión similar a la de capa 3, con misma configuración de memoria, particiones y zona horaria.
 
-Funciones auxiliares:
+#### ejercicios/ex2_stress.py
 
-- `header(title)`: imprime un separador visual con el título, para organizar bien la salida en consola.
-- `safe_exists(spark, path)`: intenta leer un Parquet en `path` y devuelve `True` si se puede leer al menos una fila, `False` si hay error (ruta no existe, esquema corrupto, etc.).
-- `basic_profile(df, name)`:
-  - Muestra:
-    - Esquema (`printSchema`).
-    - Conteo de filas.
-    - Muestra de 10 filas completas.
-- `null_profile(df, cols, name, sample_fraction)`:
-  - Toma una muestra aleatoria (por defecto 0.1 % de las filas).
-  - Calcula cuántos nulos hay por cada columna de `cols` que exista.
-  - Muestra una única fila con esos contadores.
-- `temporal_range(df, name)`:
-  - Si existe `date`, muestra mínimo y máximo de fecha; si no, avisa.
-- `by_service_counts(df, name)`:
-  - Si existe `service_type`, muestra conteo de filas por servicio, ordenado de mayor a menor.
+Ej.2: Dashboard de estrés urbano
 
----
+Visualización de estabilidad del sistema de transporte combinando demanda + variabilidad.
 
-### 1. Inspector de `df_daily_service`
+Wrapper que ejecuta pipelines/run_stress_zone.py
 
-Función: `inspect_df_daily_service(df)`.
+Entrada: TLC + meteorología + eventos
 
-Flujo:
+Salida: data/aggregated/ex2/df_stress_urban_zone_hour/
 
-- Aplica `basic_profile` para ver esquema, número de filas y 10 ejemplos.
-- Muestra el rango de fechas (si hay columna `date`) con `temporal_range`.
-- Muestra conteos por servicio con `by_service_counts`.
-- Muestra:
-  - Top días por `num_trips` (días con más viajes).
-  - Top días por `avg_price` (días más caros de media).
-  - Top días por `std_price` (días con precio más disperso), si existe esa columna.
-- Ejecuta `null_profile` sobre columnas clave:
-  - `date`, `service_type`, `num_trips`, `avg_price`, `std_price`, `unique_zones`.
+Indicador sintético que combine:
+- Variabilidad de precio (volatilidad)
+- Volumen de demanda (magnitud)
+- Contexto externo (eventos, clima)
 
----
+Útil para: Alertas operacionales, identificación de contextos críticos, análisis histórico
 
-### 2. Inspector de `df_zone_hour_day_global`
 
-Función: `inspect_df_zone_hour_day_global(df)`.
+## 4. Datos de entrada y salida
 
-Flujo:
+### 4.1 Datos de entrada esperados
 
-- Aplica `basic_profile` y `temporal_range`.
-- Muestra:
-  - Top combinaciones zona–hora–día por `num_trips` (más actividad).
-  - Top combinaciones por `avg_price` (más caras).
-  - Top combinaciones por `std_price` si la columna existe.
-- Analiza la distribución de filas por `hour`:
-  - `groupBy("hour").count()` ordenado por hora, para ver qué horas tienen más registros.
-- Hace un sanity check de horas:
-  - Muestra filas con `hour` fuera del rango [0, 23]. Si aparece algo aquí, es una señal de datos mal construidos.
-- Ejecuta `null_profile` para:
-  - `pu_location_id`, `hour`, `date`, `num_trips`, `avg_price`, `std_price` (las que existan).
+Capa 2 (TLC):
+- Ubicación: data/standarized/
+- Estructura: service_type=XX/year=YYYY/month=MM/*.parquet
+- Columnas mínimas: date, hour, service_type, pu_location_id, total_amount_std, tip_amount, tip_pct, etc.
 
----
+Datos externos:
+- Meteorología: data/external/meteo/standarized/
+- Eventos: data/external/events/standarized/
+- Alquiler: data/external/rent/aggregated/
+- Restaurantes: data/external/restaurants/aggregated/
 
-### 3. Inspector de `df_zone_hour_day_service`
+### 4.2 Datos de salida generados
 
-Función: `inspect_df_zone_hour_day_service(df)`.
+Agregados base:
+- data/aggregated/df_daily_service/ (particionado por service_type)
+- data/aggregated/df_zone_hour_day_global/ (particionado por date)
+- data/aggregated/df_zone_hour_day_service/ (particionado por date, service_type)
+- data/aggregated/df_variability/ (particionado por service_type)
 
-Muy similar al anterior, pero teniendo en cuenta `service_type`:
+Datasets ejercicios:
+- data/aggregated/ex1a/df_demand_zone_hour_day/ (particionado por hour, pu_location_id)
+- data/aggregated/ex1b/df_trip_level_tips/ (particionado por year, month)
+- data/aggregated/ex1c/df_demand_patterns/ (particionado por pu_location_id)
+- data/aggregated/ex1d/df_zone_socioeconomic/ (estructura por decidir)
+- data/aggregated/ex2/df_stress_urban_zone_hour/ (estructura por decidir)
 
-- Aplica `basic_profile`, `temporal_range` y `by_service_counts`.
-- Muestra:
-  - Top combinaciones zona–hora–día–servicio por `num_trips`.
-  - Top combinaciones por `avg_price`.
-  - Top por `std_price` si existe.
-- Sanity check de `hour` fuera de [0, 23].
-- `null_profile` para:
-  - `pu_location_id`, `hour`, `date`, `service_type`, `num_trips`, `avg_price`, `std_price`.
 
-Esto ayuda a ver diferencias por servicio en las mismas franjas zona–hora–día.
+## 5. Ejecucion
 
----
+### 5.1 Ejecutar Capa 3 completa
 
-### 4. Inspector de `df_variability`
+```bash
+uv run -m src.procesamiento.capa3.main
+```
 
-Función: `inspect_df_variability(df)`.
+Ejecuta secuencialmente:
+- Paso 1: Todos los agregados base (tlc, eventos, meteo, rent, restaurants)
+- Paso 2: Todos los datasets ejercicios (ex1a, ex1b, ex1c, ex1d, ex2)
 
-Enfocado en la tabla de variabilidad (IQR):
 
-- Aplica `basic_profile` y `by_service_counts` (si existe `service_type`).
-- Muestra:
-  - Top combinaciones por `price_variability` (zonas/horas donde el precio es más impredecible).
-  - Top combinaciones por `avg_price` (más caras).
-  - Top combinaciones por `num_trips` (más volumen).
-  - Top combinaciones por `biz_score` (score de negocio), si la columna existe; si no, avisa de que puede que estés leyendo una versión antigua del DF.
-- Sanity check:
-  - Muestra filas con `price_variability < 0` (no deberían existir; si aparecen, algo está mal en el cálculo o en los datos).
-- `null_profile` sobre:
-  - `pu_location_id`, `hour`, `service_type`, `price_variability`, `avg_price`, `num_trips`, `biz_score`.
+### 5.2 Ejecutar componente individual
 
----
+```bash
+# Solo agregados TLC
+uv run -m src.procesamiento.capa3.aggregates.tlc --mode overwrite --cap-max-price 500
 
-### 5. Flujo completo (`main` de `inspect_capa3.py`)
+# Solo Ejercicio 1b (propinas)
+uv run -m src.procesamiento.capa3.ejercicios.ex1b_tips --mode overwrite
 
-En `main`:
+# Solo Ejercicio 1c (patrones)
+uv run -m src.procesamiento.capa3.ejercicios.ex1c_patterns --mode overwrite
+```
 
-1. Crea la sesión Spark.
-2. Define `base = "data/aggregated"` y cuatro rutas esperadas:
-   - `df_daily_service`
-   - `df_zone_hour_day_global`
-   - `df_zone_hour_day_service`
-   - `df_variability`.
-3. Comprueba cada ruta con `safe_exists` y muestra si está OK o da error/no existe.
-4. Para cada DF que exista:
-   - Lo lee desde Parquet.
-   - Llama a su función `inspect_df_*` correspondiente.
-5. Cierra la sesión Spark.
+Parámetros comunes:
+- --in-dir: Directorio de entrada
+- --out-dir: Directorio de salida
+- --from, --to: Rango de fechas (formato YYYY-MM-DD)
+- --mode: 'overwrite' (borra previas) o 'append' (conserva)
 
-Al ejecutar `python inspect_capa3.py` tendrás un informe por consola que te permite validar si la capa 3 tiene buena calidad antes de usarla en análisis o modelos.
+
+## 6. Consideraciones de diseño
+
+### 6.1 Terciles por zona (vs percentiles fijos)
+
+Clasificación de demanda en Ej.1c usa terciles POR ZONA (no globales).
+
+Razón: Respeta naturaleza local de cada zona. Midtown siempre tendrá demanda mayor que Queens, pero ambas pueden estar en su "tercil alto". Permite identificar franjas horarias de pico locales en cada zona sin sesgos geográficos.
+
+### 6.2 Separación entre agregados y ejercicios
+
+Paso 1 (agregados) genera tablas reutilizables que pueden consumirse multipropósito (análisis exploratorio, dashboards, etc).
+Paso 2 (ejercicios) construye datasets específicos orientados a ML.
+
+Esta separación permite que cambios en un ejercicio no afecten a otros.
+
+### 6.3 Estabilidad + Demanda en Ej.1c
+
+Se incluye análisis de estabilidad (variabilidad de demanda) además de nivel de demanda.
+
+Razón: Operacionalmente es valioso saber no solo dónde hay demanda, sino QUE TAN PREDECIBLE es. Alta demanda predecible diferencia de alta demanda volátil.
+
+### 6.4 Builders segregados de ejercicios
+
+Lógica compleja (builders/) está separada de puntos de entrada (ejercicios/).
+
+Razón: Builders contienen lógica reutilizable que puede compartirse entre ejercicios (ej: demand_zone.py es usado por ex1a pero podría usarse en otras análisis).
+
+
+## 7. Notas técnicas
+
+### 7.1 Gestión de memoria
+
+Capa 3 está optimizada para procesar millones de registros:
+- Lectura particionada (mes a mes para TLC)
+- Garbage collection explícito en aggregates/tlc.py
+- Escritura particionada (por date, service_type, etc.) para consultas eficientes
+
+### 7.2 Particionamiento
+
+Todas las salidas se guardan particionadas (estilo Spark), aunque se implementa en pandas. Esto permite:
+- Lectura selectiva (sin leer todo el dataset)
+- Paralelización posible en futuro
+- Compatibilidad con herramientas de análisis (Spark, DuckDB, SQL)
+
+### 7.3 Validación de datos
+
+Cada módulo aplica filtros defensivos:
+- Checks de nulos en columnas críticas
+- Validaciones de rango (price > 0, hour 0-23, etc.)
+- Marcadores originales de validez (is_valid_for_tip, etc.)
