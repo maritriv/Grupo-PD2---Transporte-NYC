@@ -230,22 +230,30 @@ Nota: Requiere implementación específica (stub actualmente)
 
 #### ejercicios/ex2_stress.py
 
-Ej.2: Dashboard de estrés urbano
-
-Visualización de estabilidad del sistema de transporte combinando demanda + variabilidad.
+Ej.2: Dashboard y Modelo Predictivo de Estrés Urbano
+Visualización de estabilidad del sistema de transporte combinando demanda + variabilidad, y preparación de datos para predicción a corto plazo.
 
 Wrapper que ejecuta pipelines/run_stress_zone.py
 
-Entrada: TLC + meteorología + eventos
+Entradas: TLC + meteorología + eventos + alquileres + restaurantes
 
-Salida: data/aggregated/ex2/df_stress_urban_zone_hour/
+Salidas principales (ruta base: data/aggregated/ex_stress/):
+  - df_stress_zone_hour_day (Dataset Model-Ready)
+  - df_stress_zone_slot (Dataset de Panel Agregado)
 
-Indicador sintético que combine:
-- Variabilidad de precio (volatilidad)
-- Volumen de demanda (magnitud)
-- Contexto externo (eventos, clima)
+Indicador sintético que combina:
 
-Útil para: Alertas operacionales, identificación de contextos críticos, análisis histórico
+- Variabilidad de precio (volatilidad estandarizada mediante Z-score)
+- Volumen de demanda (magnitud logarítmica estandarizada)
+- Contexto externo (eventos, clima, renta, restaurantes)
+
+Horizonte de predicción y Targets:
+
+Se predice a corto plazo (horizonte t+1, es decir, a 1 hora vista).
+- target_stress_t1 (Regresión): Valor continuo del indicador sintético en la hora siguiente.
+- target_is_stress_t1 (Clasificación): Variable binaria (1/0) que indica si en la siguiente hora el indicador superará el umbral crítico de estrés (por defecto, el percentil 90 histórico).
+
+Útil para: Predicción de picos a 1 hora vista, alertas operacionales preventivas, identificación de contextos críticos, análisis histórico.
 
 
 ## 4. Datos de entrada y salida
@@ -276,7 +284,8 @@ Datasets ejercicios:
 - data/aggregated/ex1b/df_trip_level_tips/ (particionado por year, month)
 - data/aggregated/ex1c/df_demand_patterns/ (particionado por pu_location_id)
 - data/aggregated/ex1d/df_zone_socioeconomic/ (estructura por decidir)
-- data/aggregated/ex2/df_stress_urban_zone_hour/ (estructura por decidir)
+- data/aggregated/ex_stress/df_stress_zone_hour_day/ (particionado por year, month) -> Dataset Model-Ready
+- data/aggregated/ex_stress/df_stress_zone_slot/ (particionado por day_of_week) -> Dataset Panel para Dashboard
 
 
 ## 5. Ejecucion
