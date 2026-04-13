@@ -1,6 +1,10 @@
 *.codex
 *.zip
 
+# Frontend
+node_modules/
+package-lock.json
+
 # Data
 data/
 

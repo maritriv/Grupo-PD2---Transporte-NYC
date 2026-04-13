@@ -1,6 +1,13 @@
 {
-  "dependencies": {
-    "leaflet": "^1.9.4",
-    "react-leaflet": "^5.0.0"
+  "name": "root-tools",
+  "private": true,
+  "scripts": {
+    "setup": "npm install && cd frontend && npm install && cd ..",
+    "dev": "concurrently -n backend,frontend -c blue,green \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "uv run -m uvicorn backend.app.main:app --reload",
+    "dev:frontend": "cd frontend && npm run dev -- --open"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
   }
 }
