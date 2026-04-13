@@ -1,4 +1,4 @@
-# src/procesamiento/capa3/capa3_eventos.py
+# src/procesamiento/capa3/aggregates/eventos.py
 from __future__ import annotations
 
 import argparse

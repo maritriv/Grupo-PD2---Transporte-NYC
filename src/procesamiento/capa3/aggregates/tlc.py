@@ -1,4 +1,4 @@
-# src/procesamiento/capa3/capa3_tlc.py
+# src/procesamiento/capa3/aggregates/tlc.py
 from __future__ import annotations
 
 import argparse
