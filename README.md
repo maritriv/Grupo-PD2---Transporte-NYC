@@ -213,72 +213,75 @@ uv run -m src.extraccion.download_from_minio --no-skip
 
 > Es necesario que el archivo `credentials.json` esté configurado en la raíz del proyecto antes de ejecutar la descarga.
 
-Para ejecutar las visualizaciones es necesario descargar los datos de zonas de NYC.
-Ejecuta el siguiente comando en la raíz del proyecto según tu sistema:
-
-**Linux / WSL / macOS (con wget):**
-
-```bash
-wget -P data/external/ https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv
-```
-
-Si wget no está instalado:
-- Ubuntu/WSL: sudo apt install wget
-- macOS (Homebrew): brew install wget
-
-Alternativa en macOS (con curl):
-```bash
-curl -o data/external/taxi_zone_lookup.csv https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv
-```
-
-**Windows – PowerShell**
-
-```bash
-New-Item -ItemType Directory -Path "data\external" -Force
-Invoke-WebRequest -Uri "https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv" -OutFile "data\external\taxi_zone_lookup.csv"
-```
-
-**Windows – Command Prompt (cmd)**
-
-```bash
-mkdir data\external
-curl -o data\external\taxi_zone_lookup.csv https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv
-```
-----
-
 ## Ejecución de la página web
+Este proyecto puede ejecutarse de varias formas, dependiendo de si quieres levantar `backend` y `frontend` por separado o todo a la vez.
 
-**1. Abre una terminal en la raíz del proyecto y ejecuta:
+### Opción 1: Ejecución manual
+**1. Levantar el backend**
+
+Abre una terminal en la raíz del proyecto y ejecuta:
 ```bash
 uv run -m uvicorn backend.app.main:app --reload
 ```
 
-Si arranca bien, aparecerá una linea parecida a:
+Si todo va bien, verás algo como:
 ```bash
 Uvicorn running on http://127.0.0.1:8000
 ```
-Busca en el navegador:
+
+Puedes comprobar que funciona abriendo:
 ```bash 
 http://127.0.0.1:8000/api/health
 ```
 
-Debería aparecer algo como:
-`{"status":"ok"}`
+Debería devolver: `{"status":"ok"}`
 
 
-**2. Abre otra terminal y ejecuta:**
+**2. Levantar el frontend**
+
+En otra terminal:
 ```bash
 cd frontend
 npm install
-npm install leaflet react-leaflet
 npm run dev
 ```
 
-Si va bien, Vite te dará una URL, normalmente:
+Vite te mostrará una URL, normalmente:
 ```bash
 http://localhost:5173
 ```
 Abre esa dirección en el navegador.
+
+### Opción 2: Instalación completa del proyecto
+
+Si es la primera vez que clonas el proyecto, puedes instalar todo de una vez:
+```bash
+npm run setup
+```
+Esto ejecuta:
+
+- Instalación del backend (dependencias Python)
+- Instalación del frontend (npm)
+
+Puedes levantar backend + frontend automáticamente con un solo comando:
+```bash
+npm run dev
+```
+Esto usa `concurrently` y ejecuta:
+
+- Backend: `uvicorn`
+- Frontend: `vite`
+
+Verás ambos logs en la misma terminal.
+
+### ⚙️ Scripts disponibles
+Desde la raíz del proyecto:
+```bash
+npm run setup        # Instala todo el proyecto
+npm run dev          # Ejecuta backend + frontend juntos
+npm run dev:backend  # Solo backend
+npm run dev:frontend # Solo frontend
+```
 
 ## Equipo de desarrollo
 
