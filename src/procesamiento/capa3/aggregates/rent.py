@@ -9,11 +9,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-try:
-    from config.settings import obtener_ruta  # type: ignore
-except Exception:
-    def obtener_ruta(p: str) -> Path:
-        return Path(p)
+from config.settings import obtener_ruta
 
 from src.procesamiento.capa3.common.io import cleanup_dataset_output
 

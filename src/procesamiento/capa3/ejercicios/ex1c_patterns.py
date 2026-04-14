@@ -104,10 +104,19 @@ def build_demand_patterns(
     # =========================================================================
     console.print("[cyan]Clasificando demanda (terciles por zona)...[/cyan]")
     
+    def safe_qcut(x):
+        """Clasifica en terciles, manejando casos con pocos valores únicos."""
+        try:
+            if len(x.dropna().unique()) < 3:
+                # Si hay menos de 3 valores únicos, asignar "Media" a todos
+                return pd.Series(["Media"] * len(x), index=x.index)
+            return pd.qcut(x, q=3, labels=["Baja", "Media", "Alta"], duplicates="drop")
+        except ValueError:
+            # Si qcut falla, asignar "Media" por defecto
+            return pd.Series(["Media"] * len(x), index=x.index)
+    
     # Agrupar por zona para calcular percentiles
-    agg_data["demand_level"] = agg_data.groupby("pu_location_id")["num_trips_avg"].transform(
-        lambda x: pd.qcut(x, q=3, labels=["Baja", "Media", "Alta"], duplicates="drop")
-    )
+    agg_data["demand_level"] = agg_data.groupby("pu_location_id")["num_trips_avg"].transform(safe_qcut)
     
     # =========================================================================
     # Paso 3: Clasificación de ESTABILIDAD (variabilidad)

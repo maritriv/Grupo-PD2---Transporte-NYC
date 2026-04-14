@@ -12,6 +12,7 @@ import argparse
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.parquet as pq
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -29,9 +30,18 @@ console = Console()
 TIP_COLS = [
     "service_type", "pickup_datetime", "dropoff_datetime", "date", "year", "month", "hour", "day_of_week",
     "is_weekend", "week_of_year", "pu_location_id", "do_location_id", "trip_distance", "trip_duration_min",
-    "total_amount_std", "fare_amount", "tip_amount", "tip_pct", "passenger_count", "payment_type", "RatecodeID",
+    "total_amount_std", "fare_amount", "tip_amount", "tips", "tip_pct", "passenger_count", "payment_type", "RatecodeID",
+    "base_passenger_fare", "total_amount", "tolls_amount", "tolls", "congestion_surcharge", "airport_fee",
     "is_valid_for_tip", "is_valid_for_distance", "is_valid_for_duration", "is_valid_for_price",
 ]
+
+
+def _normalize_tip_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if "tip_amount" not in df.columns and "tips" in df.columns:
+        df["tip_amount"] = df["tips"]
+    if "fare_amount" not in df.columns and "base_passenger_fare" in df.columns:
+        df["fare_amount"] = df["base_passenger_fare"]
+    return df
 
 
 def _load_tlc_standardized(base: Path) -> pd.DataFrame:
@@ -42,10 +52,53 @@ def _load_tlc_standardized(base: Path) -> pd.DataFrame:
     parts = []
     for _y, _m, files in iter_month_partitions(base):
         for fp in files:
-            parts.append(pd.read_parquet(fp, columns=[c for c in TIP_COLS if c]))
+            schema_cols = set(pq.ParquetFile(fp).schema.names)
+            cols_to_read = [c for c in TIP_COLS if c in schema_cols]
+            if not cols_to_read:
+                continue
+            df = pd.read_parquet(fp, columns=cols_to_read)
+            df = _normalize_tip_columns(df)
+            parts.append(df)
     if not parts:
         raise FileNotFoundError(f"No se encontraron particiones TLC en {base}")
     return pd.concat(parts, ignore_index=True)
+
+
+def _process_tlc_to_trip_level(
+    base: Path,
+    out_dir: Path,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> tuple[int, int, int, int]:
+    """Procesa cada fichero TLC de forma incremental para reducir uso de memoria."""
+    rows_input = 0
+    rows_output = 0
+    files_processed = 0
+    files_skipped = 0
+
+    for _y, _m, files in iter_month_partitions(base):
+        for fp in files:
+            schema_cols = set(pq.ParquetFile(fp).schema.names)
+            cols_to_read = [c for c in TIP_COLS if c in schema_cols]
+            if not cols_to_read:
+                files_skipped += 1
+                continue
+
+            df_raw = pd.read_parquet(fp, columns=cols_to_read)
+            df_raw = _normalize_tip_columns(df_raw)
+            rows_input += len(df_raw)
+            if df_raw.empty:
+                files_processed += 1
+                continue
+
+            df_out = build_tip_trip_level(df_raw, date_from=date_from, date_to=date_to)
+            files_processed += 1
+            rows_output += len(df_out)
+
+            if not df_out.empty:
+                write_partitioned_dataset(df_out, out_dir, ["year", "month"])
+
+    return rows_input, rows_output, files_processed, files_skipped
 
 
 def build_tip_trip_level(
@@ -162,22 +215,27 @@ def main():
     if args.mode == "overwrite":
         cleanup_dataset_output(out_base, "df_trip_level_tips", label="EX1(b)")
 
+    out_dir = out_base / "df_trip_level_tips"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     with console.status("[cyan]Procesando capa2 TLC...[/cyan]"):
-        df = _load_tlc_standardized(in_dir)
-        console.print(f"[cyan]Cargado: {len(df):,} registros[/cyan]")
-        
-        out = build_tip_trip_level(df, date_from=args.date_from, date_to=args.date_to)
-        console.print(f"[cyan]Procesado: {len(out):,} viajes válidos[/cyan]")
-    
-    write_partitioned_dataset(out, out_base / "df_trip_level_tips", ["year", "month"])
+        rows_input, rows_output, files_processed, files_skipped = _process_tlc_to_trip_level(
+            base=in_dir,
+            out_dir=out_dir,
+            date_from=args.date_from,
+            date_to=args.date_to,
+        )
+        console.print(f"[cyan]Procesado {files_processed:,} archivos TLC (omitidos: {files_skipped:,})[/cyan]")
+        console.print(f"[cyan]Filas leídas: {rows_input:,}; filas salida: {rows_output:,}[/cyan]")
 
     summary = Table(show_header=True, header_style="bold magenta", title="Resumen EX1(b) Trip Level")
     summary.add_column("Métrica", style="bold white")
     summary.add_column("Valor", justify="right")
-    summary.add_row("Filas input", f"{len(df):,}")
-    summary.add_row("Filas output", f"{len(out):,}")
-    summary.add_row("% filtrado", f"{(1 - len(out)/len(df))*100:.1f}%")
-    summary.add_row("Salida", str(out_base / "df_trip_level_tips"))
+    summary.add_row("Archivos procesados", f"{files_processed:,}")
+    summary.add_row("Archivos saltados", f"{files_skipped:,}")
+    summary.add_row("Filas input", f"{rows_input:,}")
+    summary.add_row("Filas output", f"{rows_output:,}")
+    summary.add_row("Salida", str(out_dir))
     console.print(summary)
     console.print("[bold green]✅ OK[/bold green] EX1(b) trip level completado")
 

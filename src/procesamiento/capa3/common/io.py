@@ -17,11 +17,9 @@ def safe_remove_dir(path: Path) -> None:
 
     try:
         shutil.rmtree(path)
-    except PermissionError as exc:
-        raise PermissionError(
-            f"No se pudo borrar la carpeta '{path}'. "
-            "Probablemente esta abierta en VS Code o bloqueada por otro proceso."
-        ) from exc
+    except (PermissionError, OSError) as exc:
+        console.print(f"[yellow]Aviso:[/yellow] No se pudo borrar '{path}': {exc}")
+        console.print("  Continuando sin borrar... (el modo overwrite recreará el directorio)")
 
 
 def cleanup_dataset_output(out_base: Path, dataset_name: str, label: str = "dataset") -> None:

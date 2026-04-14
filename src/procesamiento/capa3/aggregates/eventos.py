@@ -13,11 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-try:
-    from config.settings import obtener_ruta  # type: ignore
-except Exception:
-    def obtener_ruta(p: str) -> Path:
-        return Path(p)
+from config.settings import obtener_ruta  # type: ignore
 
 DEBUG = False  # True para ver previews
 MIN_YEAR = 2023
@@ -293,13 +289,11 @@ def main():
     if args.date_to is not None:
         datetime.strptime(args.date_to, "%Y-%m-%d")
 
-    project_root = Path(__file__).resolve().parents[3]
-
     # Capa 2
-    layer2_path = (project_root / "data" / "external" / "events" / "standarized").resolve()
+    layer2_path = obtener_ruta("data/external/events/standarized").resolve()
 
     # Salida capa 3 en external, alineada con meteo/rent/restaurants
-    out_base = (project_root / "data" / "external" / "events" / "aggregated").resolve()
+    out_base = obtener_ruta("data/external/events/aggregated").resolve()
 
     cfg = Table(show_header=True, header_style="bold white", title="Configuracion Capa3 Eventos")
     cfg.add_column("Campo", style="bold cyan")
