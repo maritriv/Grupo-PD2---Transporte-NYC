@@ -170,3 +170,62 @@ def split_model_stress(
         x_val, y_val = _to_xy(val_df)
 
     return x_train, y_train, x_val, y_val, x_test, y_test
+
+
+
+def split_model_propinas(
+    df: pd.DataFrame,
+    train_frac: float = 0.70,
+    val_frac: float = 0.15,
+    time_col: str = "timestamp_hour",
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Split temporal por bloques de timestamps unicos.
+
+    A diferencia de un corte por filas, esta version garantiza que todas las
+    muestras con el mismo `timestamp_hour` quedan en el mismo bloque
+    (train/val/test), algo especialmente importante en datasets a nivel viaje.
+    """
+    if train_frac <= 0 or train_frac >= 1:
+        raise ValueError("train_frac debe estar entre 0 y 1.")
+    if val_frac <= 0 or val_frac >= 1:
+        raise ValueError("val_frac debe estar entre 0 y 1.")
+    if train_frac + val_frac >= 1:
+        raise ValueError("train_frac + val_frac debe ser menor que 1.")
+
+    if time_col not in df.columns:
+        raise ValueError(f"El dataset debe incluir la columna temporal '{time_col}'.")
+
+    out = df.copy()
+    out[time_col] = pd.to_datetime(out[time_col], errors="coerce")
+    out = out.dropna(subset=[time_col]).copy()
+    out = out.sort_values(time_col, kind="mergesort").reset_index(drop=True)
+
+    unique_ts = out[time_col].drop_duplicates().sort_values().reset_index(drop=True)
+    n_steps = len(unique_ts)
+    if n_steps < 10:
+        raise ValueError(
+            "Hay muy pocas muestras temporales para entrenar de forma fiable. "
+            f"Timestamps disponibles: {n_steps}"
+        )
+
+    n_train = int(n_steps * train_frac)
+    n_val = int(n_steps * val_frac)
+    n_test = n_steps - n_train - n_val
+
+    if n_train <= 0 or n_val <= 0 or n_test <= 0:
+        raise ValueError("El split temporal ha dejado un bloque vacio. Ajusta train_frac/val_frac.")
+
+    train_end_ts = unique_ts.iloc[n_train - 1]
+    val_start_ts = unique_ts.iloc[n_train]
+    val_end_ts = unique_ts.iloc[n_train + n_val - 1]
+    test_start_ts = unique_ts.iloc[n_train + n_val]
+
+    train = out[out[time_col] <= train_end_ts].copy()
+    val = out[(out[time_col] >= val_start_ts) & (out[time_col] <= val_end_ts)].copy()
+    test = out[out[time_col] >= test_start_ts].copy()
+
+    if train.empty or val.empty or test.empty:
+        raise ValueError("El split temporal ha dejado un bloque vacio. Ajusta train_frac/val_frac.")
+
+    return train, val, test
