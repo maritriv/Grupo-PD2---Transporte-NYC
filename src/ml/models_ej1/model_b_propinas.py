@@ -52,9 +52,9 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, m
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from src.ml.dataset.split_dataset import split_model_propinas
+from src.ml.models_ej1.split_dataset import split_model_propinas
 from config.pipeline_runner import console, print_done, print_stage
-from src.ml.dataset.modules.io import read_partitioned_parquet_dir
+from src.ml.models_ej1.common.io import read_partitioned_parquet_dir
 
 try:
     from xgboost import XGBRegressor

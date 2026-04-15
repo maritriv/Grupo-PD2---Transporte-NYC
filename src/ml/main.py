@@ -10,7 +10,6 @@ def main() -> None:
     print_stage("PIPELINE ML", "Dataset + Modelos")
 
     modulos = [
-        "src.ml.dataset.main",
         "src.ml.models_ej1.main",
         "src.ml.models_ej2.main",
     ]

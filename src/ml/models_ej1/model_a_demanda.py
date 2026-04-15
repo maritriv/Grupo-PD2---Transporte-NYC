@@ -42,10 +42,10 @@ from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, top_k_ac
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from src.ml.dataset.split_dataset import split_model_demanda
+from src.ml.models_ej1.split_dataset import split_model_demanda
 
 from config.pipeline_runner import console, print_done, print_stage
-from src.ml.dataset.modules.io import read_partitioned_parquet_dir
+from src.ml.models_ej1.common.io import read_partitioned_parquet_dir
 
 try:
     from xgboost import XGBClassifier
