@@ -173,6 +173,75 @@ def _month_time_bounds(year: int, month: int, min_dt: pd.Timestamp, max_dt: pd.T
     return start, end
 
 
+def _compute_temporal_split_bounds(
+    timestamps: pd.Series | list[pd.Timestamp] | list[np.datetime64],
+    train_frac: float,
+    val_frac: float,
+    gap_steps: int = 0,
+) -> dict[str, pd.Timestamp | None]:
+    """
+    Calcula los límites temporales usando la misma lógica del split train/val/test.
+    """
+    if train_frac <= 0 or train_frac >= 1:
+        raise ValueError("train_frac debe estar entre 0 y 1.")
+    if val_frac < 0 or val_frac >= 1:
+        raise ValueError("val_frac debe estar entre 0 y 1 (puede ser 0).")
+    if train_frac + val_frac >= 1:
+        raise ValueError("train_frac + val_frac debe ser menor que 1.")
+    if gap_steps < 0:
+        raise ValueError("gap_steps no puede ser negativo.")
+
+    ts = pd.to_datetime(pd.Series(list(timestamps)), errors="coerce")
+    unique_ts = ts.dropna().drop_duplicates().sort_values().reset_index(drop=True)
+    n_steps = len(unique_ts)
+    if n_steps < 3:
+        raise ValueError(
+            "Muy pocos timestamps unicos para hacer split temporal fiable. "
+            f"Timestamps disponibles: {n_steps}"
+        )
+
+    n_train = int(n_steps * train_frac)
+    n_val = int(n_steps * val_frac)
+    has_val = val_frac > 0
+    gap_slots = gap_steps * (2 if has_val else 1)
+    n_test = n_steps - n_train - n_val - gap_slots
+
+    if n_train <= 0:
+        raise ValueError("El bloque train queda vacio. Aumenta train_frac.")
+    if has_val and n_val <= 0:
+        raise ValueError(
+            "val_frac > 0 pero el bloque de validacion queda vacio. "
+            "Aumenta val_frac o desactivalo con val_frac=0."
+        )
+    if n_test <= 0:
+        raise ValueError(
+            "El bloque test queda vacio tras aplicar fracciones y gap_steps. "
+            "Reduce gap_steps o ajusta train_frac/val_frac."
+        )
+
+    train_end_idx = n_train - 1
+    train_end_ts = pd.Timestamp(unique_ts.iloc[train_end_idx])
+
+    if has_val:
+        val_start_idx = train_end_idx + 1 + gap_steps
+        val_end_idx = val_start_idx + n_val - 1
+        test_start_idx = val_end_idx + 1 + gap_steps
+        return {
+            "train_end": train_end_ts,
+            "val_start": pd.Timestamp(unique_ts.iloc[val_start_idx]),
+            "val_end": pd.Timestamp(unique_ts.iloc[val_end_idx]),
+            "test_start": pd.Timestamp(unique_ts.iloc[test_start_idx]),
+        }
+
+    test_start_idx = train_end_idx + 1 + gap_steps
+    return {
+        "train_end": train_end_ts,
+        "val_start": None,
+        "val_end": None,
+        "test_start": pd.Timestamp(unique_ts.iloc[test_start_idx]),
+    }
+
+
 def _read_month_base(tmp_base_dir: Path, year: int, month: int) -> pd.DataFrame:
     part_dir = tmp_base_dir / f"year={year}" / f"month={month}"
     files = sorted(part_dir.rglob("*.parquet"))
@@ -671,15 +740,16 @@ def build_stress_zone_dataset(
             safe_remove_dir(d)
         d.mkdir(parents=True, exist_ok=True)
 
-    moment_var = RunningMoments()
-    moment_log = RunningMoments()
-
     month_summary_rows: List[Tuple[str, int, int, int]] = []
     month_keys_written: list[tuple[int, int]] = []
     seen_ts: set[pd.Timestamp] = set()
+    # Configuración anti-leakage fija y alineada con el split del modelo.
+    split_train_frac = 0.70
+    split_val_frac = 0.15
+    split_gap_steps = 0
 
     try:
-        # Pass 1: construir base mensual en disco + estadísticas globales para z-score
+        # Pass 1: construir base mensual en disco.
         for mi, (year, month, files) in enumerate(month_parts, start=1):
             if _month_time_bounds(year, month, min_dt=min_dt, max_dt=max_dt) is None:
                 month_summary_rows.append((f"{year}-{month:02d}", len(files), 0, 0))
@@ -755,11 +825,6 @@ def build_stress_zone_dataset(
                 stats.rows_base_completed += len(df_month_grid)
                 seen_ts.update(pd.to_datetime(df_month_grid["timestamp_hour"], errors="coerce").dropna().unique().tolist())
 
-                arr_var = pd.to_numeric(df_month_grid["price_variability"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
-                arr_log = np.log1p(pd.to_numeric(df_month_grid["n_trips"], errors="coerce").fillna(0.0).to_numpy(dtype=float))
-                moment_var.update(arr_var)
-                moment_log.update(arr_log)
-
                 write_partitioned_dataset(
                     df_month_grid,
                     tmp_base_dir,
@@ -768,6 +833,49 @@ def build_stress_zone_dataset(
                 month_keys_written.append((year, month))
 
         stats.unique_timestamps = len(seen_ts)
+        if not seen_ts:
+            raise ValueError("No hay timestamps en la base completada para construir el dataset de stress.")
+
+        split_bounds = _compute_temporal_split_bounds(
+            timestamps=list(seen_ts),
+            train_frac=split_train_frac,
+            val_frac=split_val_frac,
+            gap_steps=split_gap_steps,
+        )
+        train_end_ts = split_bounds["train_end"]
+        if train_end_ts is None:
+            raise ValueError("No se pudo calcular train_end para el ajuste sin leakage.")
+
+        console.print(
+            "[cyan]Ajuste anti-leakage[/cyan] "
+            f"| train_end={train_end_ts} | val_start={split_bounds['val_start']} | "
+            f"val_end={split_bounds['val_end']} | test_start={split_bounds['test_start']}"
+        )
+
+        # Recalcular momentos SOLO con filas de train para evitar leakage temporal.
+        moment_var = RunningMoments()
+        moment_log = RunningMoments()
+        for year, month in sorted(month_keys_written):
+            df_month_grid = _read_month_base(tmp_base_dir, year, month)
+            if df_month_grid.empty:
+                continue
+            ts = pd.to_datetime(df_month_grid["timestamp_hour"], errors="coerce")
+            train_mask = ts <= train_end_ts
+            if not bool(train_mask.any()):
+                continue
+
+            train_slice = df_month_grid.loc[train_mask]
+            arr_var = pd.to_numeric(train_slice["price_variability"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+            arr_log = np.log1p(pd.to_numeric(train_slice["n_trips"], errors="coerce").fillna(0.0).to_numpy(dtype=float))
+            moment_var.update(arr_var)
+            moment_log.update(arr_log)
+
+        if moment_var.n <= 0 or moment_log.n <= 0:
+            raise ValueError(
+                "No hay filas de train suficientes para calcular z-score sin leakage. "
+                "Revisa el rango de fechas."
+            )
+
         mean_var, std_var = moment_var.mean_std()
         mean_log, std_log = moment_log.mean_std()
 
@@ -929,12 +1037,24 @@ def build_stress_zone_dataset(
                     emit = emit.dropna(subset=["target_stress_t1"]).copy()
 
                 if not emit.empty:
-                    all_stress_parts.append(
-                        pd.to_numeric(emit["stress_score"], errors="coerce").dropna().to_numpy(dtype=float)
-                    )
-                    all_target_parts.append(
-                        pd.to_numeric(emit["target_stress_t1"], errors="coerce").dropna().to_numpy(dtype=float)
-                    )
+                    # Umbrales de clasificación sin leakage:
+                    # se ajustan solo con filas de train (según timestamp de la fila).
+                    emit_ts = pd.to_datetime(emit["timestamp_hour"], errors="coerce")
+                    train_emit = emit[emit_ts <= train_end_ts].copy()
+                    if not train_emit.empty:
+                        all_stress_parts.append(
+                            pd.to_numeric(train_emit["stress_score"], errors="coerce").dropna().to_numpy(dtype=float)
+                        )
+
+                        # target_stress_t1 es t+1: usamos t < train_end para evitar usar
+                        # objetivos cuyo valor cae fuera de train.
+                        train_emit_target = train_emit[emit_ts.loc[train_emit.index] < train_end_ts]
+                        if not train_emit_target.empty:
+                            all_target_parts.append(
+                                pd.to_numeric(train_emit_target["target_stress_t1"], errors="coerce")
+                                .dropna()
+                                .to_numpy(dtype=float)
+                            )
 
                     write_partitioned_dataset(
                         emit,
@@ -1096,6 +1216,9 @@ def build_stress_zone_dataset(
         outputs.add_row(output_panel_dataset_name, f"{stats.rows_panel_out:,}", str(panel_out_dir))
         outputs.add_row("stress_threshold_now", f"{stats.threshold_now:.4f}", "-")
         outputs.add_row("target_threshold_t1", f"{stats.threshold_target:.4f}", "-")
+        outputs.add_row("anti_leakage_train_end", str(train_end_ts), "-")
+        outputs.add_row("anti_leakage_val_start", str(split_bounds["val_start"]), "-")
+        outputs.add_row("anti_leakage_test_start", str(split_bounds["test_start"]), "-")
         console.print(outputs)
 
         return stats
