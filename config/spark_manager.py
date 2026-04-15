@@ -121,6 +121,11 @@ class SparkManager:
     @staticmethod
     def stop_session():
         if SparkManager._session:
-            SparkManager._session.stop()
-            SparkManager._session = None
-            logger.info("[bold yellow]Spark Session detenida.[/bold yellow]")
+            try:
+                SparkManager._session.stop()
+                logger.info("[bold yellow]Spark Session detenida.[/bold yellow]")
+            except Exception as e:
+                # Si la JVM cayó (por ejemplo, OOM), evitar enmascarar el error original.
+                logger.warning(f"No se pudo detener Spark limpiamente: {e}")
+            finally:
+                SparkManager._session = None
