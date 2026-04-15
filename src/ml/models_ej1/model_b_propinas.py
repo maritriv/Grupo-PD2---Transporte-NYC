@@ -54,7 +54,8 @@ from sklearn.preprocessing import StandardScaler
 
 from src.ml.models_ej1.split_dataset import split_model_propinas
 from config.pipeline_runner import console, print_done, print_stage
-from src.ml.models_ej1.common.io import read_partitioned_parquet_dir
+from src.ml.models_ej1.common.io import read_partitioned_parquet_dir_dask, collect_dask_with_filter
+from src.ml.models_ej1.common.memory import get_max_workers, get_dask_blocksize, warn_memory_config
 
 try:
     from xgboost import XGBRegressor
@@ -62,13 +63,14 @@ except ImportError:
     XGBRegressor = None
 
 
-DEFAULT_INPUT_DIR = "data/aggregated/ex1b/df_tip_dataset"
+DEFAULT_INPUT_DIR = "data/aggregated/ex1b/df_trip_level_tips"
 DEFAULT_OUTPUT_DIR = "outputs/ml/propinas"
 RANDOM_STATE = 42
 SUPPORTED_MODEL_NAMES = ["dummy_median", "elastic_net", "random_forest", "hist_gradient_boosting", "xgboost"]
 
 CORE_REQUIRED_COLS = [
-    "timestamp_hour",
+    "date",
+    "hour", 
     "target_tip_amount",
 ]
 
@@ -109,7 +111,23 @@ def ensure_columns(df: pd.DataFrame, cols: Iterable[str], name: str) -> None:
         raise ValueError(f"[{name}] Faltan columnas requeridas: {missing}")
 
 
-def load_ex1b_dataset(path: str | Path) -> pd.DataFrame:
+def load_ex1b_dataset(
+    path: str | Path,
+    use_dask: bool = True,
+    dask_blocksize: str = "64MB",
+    min_date: str | None = None,
+    max_date: str | None = None,
+) -> pd.DataFrame:
+    """
+    Carga el dataset EX1(b) usando Dask para datasets grandes.
+    
+    Args:
+        path: Ruta al dataset
+        use_dask: Si True, usa Dask para evitar llenar memoria
+        dask_blocksize: Tamaño de bloque para Dask (ej: "32MB", "64MB", "128MB")
+        min_date: Filtro de fecha mínima (se aplica antes de collect)
+        max_date: Filtro de fecha máxima (se aplica antes de collect)
+    """
     base = Path(path).resolve()
     if not base.exists():
         raise FileNotFoundError(
@@ -122,7 +140,25 @@ def load_ex1b_dataset(path: str | Path) -> pd.DataFrame:
             raise ValueError(f"El input debe ser un parquet o un directorio particionado: {base}")
         return pd.read_parquet(base)
 
-    return read_partitioned_parquet_dir(base)
+    if not use_dask:
+        # Cargar todo en memoria (solo para datasets pequeños)
+        from src.ml.models_ej1.common.io import read_partitioned_parquet_dir
+        return read_partitioned_parquet_dir(base)
+    
+    # Cargar con Dask (lazy)
+    ddf = read_partitioned_parquet_dir_dask(base, blocksize=dask_blocksize)
+    
+    # Aplicar filtros ANTES de compute() para evitar cargar datos innecesarios
+    # date está en formato string/object, comparar como strings (ISO format YYYY-MM-DD)
+    if min_date is not None:
+        min_date_str = min_date if isinstance(min_date, str) else str(min_date)
+        ddf = ddf[ddf["date"] >= min_date_str]
+    if max_date is not None:
+        max_date_str = max_date if isinstance(max_date, str) else str(max_date)
+        ddf = ddf[ddf["date"] <= max_date_str]
+    
+    # Collect a memoria (ahora probablemente mucho más pequeño gracias a filtros)
+    return ddf.compute()
 
 
 def normalize_dataset(
@@ -135,14 +171,18 @@ def normalize_dataset(
 
     ensure_columns(df, CORE_REQUIRED_COLS + [target_col], "EX1B")
 
-    df["timestamp_hour"] = pd.to_datetime(df["timestamp_hour"], errors="coerce")
+    # Normalizar date y hour, luego construir timestamp_hour
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.floor("D")
+    df["hour"] = pd.to_numeric(df["hour"], errors="coerce").astype("Int64")
+    
+    # Construir timestamp_hour a partir de date + hour
+    df["timestamp_hour"] = df.apply(
+        lambda row: pd.Timestamp(row["date"]) + pd.Timedelta(hours=int(row["hour"])) 
+        if pd.notna(row["date"]) and pd.notna(row["hour"]) else pd.NaT,
+        axis=1
+    )
 
-    if "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.floor("D")
-    else:
-        df["date"] = df["timestamp_hour"].dt.floor("D")
-
-    for col in ["hour", "month", "day", "day_of_week", "is_weekend", "is_peak_hour", "is_night_hour"]:
+    for col in ["month", "day", "day_of_week", "is_weekend", "is_peak_hour", "is_night_hour"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
 
@@ -523,6 +563,9 @@ def run_training(
     max_date: str | None = None,
     feature_scope: str = "strict_apriori",
     model_names: list[str] | None = None,
+    dask_blocksize: str | None = None,
+    use_dask: bool = True,
+    n_jobs: int | None = None,
 ) -> dict[str, Any]:
     print_stage("ML PROPINAS", "Regresion a nivel viaje", color="cyan")
 
@@ -530,7 +573,23 @@ def run_training(
     out_base = (project_root / out_dir).resolve()
     out_base.mkdir(parents=True, exist_ok=True)
 
-    df_raw = load_ex1b_dataset(project_root / input_dir)
+    # Determinar configuración de memoria automáticamente
+    if dask_blocksize is None:
+        dask_blocksize = get_dask_blocksize()
+    if n_jobs is None:
+        n_jobs = get_max_workers()
+    
+    warn_memory_config()
+
+    console.print(f"[cyan]Configuracion:[/cyan] dask_blocksize={dask_blocksize}, n_jobs={n_jobs}")
+
+    df_raw = load_ex1b_dataset(
+        project_root / input_dir,
+        use_dask=use_dask,
+        dask_blocksize=dask_blocksize,
+        min_date=min_date,
+        max_date=max_date,
+    )
     df = normalize_dataset(df_raw, target_col=target_col, min_date=min_date, max_date=max_date)
 
     train_df, val_df, test_df = split_model_propinas(
@@ -694,6 +753,22 @@ def main() -> None:
         default=None,
         help="Modelos a entrenar. Si no se indica, ejecuta todos los disponibles del entorno.",
     )
+    parser.add_argument(
+        "--dask-blocksize",
+        default=None,
+        help="Tamaño de bloque para Dask (ej: '32MB', '64MB', '128MB'). Si no se especifica, se auto-detecta.",
+    )
+    parser.add_argument(
+        "--no-dask",
+        action="store_true",
+        help="Desactiva Dask y carga todo en memoria (solo para datasets pequeños).",
+    )
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=None,
+        help="Número de jobs paralelos para sklearn. Si no se especifica, se auto-detecta (n_cpu - 1).",
+    )
     args = parser.parse_args()
 
     run_training(
@@ -708,6 +783,9 @@ def main() -> None:
         max_date=args.max_date,
         feature_scope=args.feature_scope,
         model_names=args.models,
+        dask_blocksize=args.dask_blocksize,
+        use_dask=not args.no_dask,
+        n_jobs=args.n_jobs,
     )
 
 

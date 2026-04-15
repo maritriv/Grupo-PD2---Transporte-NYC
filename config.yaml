@@ -103,10 +103,10 @@ spark:
   # "yarn" Le dice que corra distribuido en el clúster
   master: "local[*]"
   driver_memory: "2g"
-  executor_memory: "1g"
+  executor_memory: "1.5g"
   # El puerto de la UI (por defecto 4040, lo cambiamos para evitar conflictos)
   ui_port: 4050
   # Particiones: para 28GB local, 200 suele estar bien, pero para dev mejor 8-16
-  shuffle_partitions: 16
+  shuffle_partitions: 100
   # Formato de guardado por defecto
   default_format: "parquet"
