@@ -28,7 +28,7 @@ NEEDED_TLC_COLS = [
     "is_valid_for_demand",
 ]
 
-# OJO: no incluimos num_trips en la salida final para no duplicar target
+# num_trips se conserva como predictora.
 FINAL_COLS = [
     "timestamp_hour",
     "date",
@@ -39,6 +39,7 @@ FINAL_COLS = [
     "day_of_week",
     "is_weekend",
     "pu_location_id",
+    "num_trips",
     "lag_1h",
     "lag_24h",
     "lag_168h",
@@ -393,8 +394,8 @@ def build_model_table(
     )
     df["rent_price_zone"] = mapped_rent["rent_price_zone"]
 
-    # El target es la demanda real de esa fila
-    df["target_n_trips"] = pd.to_numeric(df["num_trips"], errors="coerce").astype("Int32")
+    # Target a horizonte de 1 hora (t+1) por zona.
+    df["target_n_trips"] = grp["num_trips"].shift(-1)
     df["hour_block_3h"] = (pd.to_numeric(df["hour"], errors="coerce") // 3).astype("Int8")
 
     if "city_n_events" not in df.columns:
@@ -440,6 +441,7 @@ def build_model_table(
         "hour",
         "day_of_week",
         "pu_location_id",
+        "num_trips",
         "target_n_trips",
     ]:
         if c in df.columns:
@@ -618,6 +620,7 @@ def build_demand_zone_dataset(
 
         # Pass 2: construir features/target por mes, con continuidad temporal por zona.
         history_tail = pd.DataFrame(columns=base_cols)
+        pending_rows = pd.DataFrame(columns=FINAL_COLS)
 
         for mi, (year, month) in enumerate(sorted(month_keys_written), start=1):
             with console.status(
@@ -674,12 +677,28 @@ def build_demand_zone_dataset(
                 if df_month_out.empty:
                     continue
 
-                write_partitioned_dataset(
-                    df_month_out,
-                    out_base / output_dataset_name,
-                    partition_cols=["year", "month"],
+                # Resolver target t+1 sin perder fronteras entre meses:
+                # las filas sin futuro inmediato quedan en pending y se emiten
+                # cuando se procese el siguiente mes.
+                combined = pd.concat([pending_rows, df_month_out], ignore_index=True)
+                combined = combined.sort_values(["pu_location_id", "timestamp_hour"]).reset_index(drop=True)
+                combined["target_n_trips"] = (
+                    combined.groupby("pu_location_id", sort=False)["num_trips"].shift(-1)
                 )
-                stats.rows_out += len(df_month_out)
+                combined["target_n_trips"] = pd.to_numeric(
+                    combined["target_n_trips"], errors="coerce"
+                ).astype("Int32")
+
+                emit = combined[combined["target_n_trips"].notna()].copy()
+                pending_rows = combined[combined["target_n_trips"].isna()].copy()
+
+                if not emit.empty:
+                    write_partitioned_dataset(
+                        emit,
+                        out_base / output_dataset_name,
+                        partition_cols=["year", "month"],
+                    )
+                    stats.rows_out += len(emit)
 
                 hist_base = augmented[base_cols].copy()
                 hist_base = hist_base.sort_values(["pu_location_id", "timestamp_hour"])

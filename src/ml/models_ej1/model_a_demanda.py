@@ -6,8 +6,8 @@ Entrena modelos para predecir la zona de maxima demanda por franja horaria.
 Formulacion elegida
 -------------------
 La capa 3 EX1(a) deja un panel por (timestamp_hour, pu_location_id) donde
-`target_n_trips` representa la demanda observada de viajes/pickups en la zona de
-pickup `pu_location_id`.
+`target_n_trips` representa la demanda observada en horizonte t+1 (una hora
+hacia adelante) para la zona de pickup `pu_location_id`.
 
 Para convertirlo en un problema de clasificacion multiclase:
 
@@ -17,10 +17,11 @@ Para convertirlo en un problema de clasificacion multiclase:
    etiqueta sea determinista.
 4. Las features se construyen con:
    - variables globales de calendario, meteo y eventos de esa hora
-   - variables historicas por zona (`lag_*`, `rolling_*`) pivotadas a formato ancho
+   - señales por zona (`num_trips` actual y variables historicas `lag_*`, `rolling_*`)
+     pivotadas a formato ancho
 
-Asi evitamos fuga de informacion: no usamos `target_n_trips` actual como feature,
-solo señales historicas disponibles antes de la hora a predecir.
+Asi evitamos fuga de informacion: no usamos informacion futura como feature;
+el target es t+1 y las features solo usan informacion disponible en t o anterior.
 
 Ejemplo:
     uv run -m src.ml.models_ej1.model_a_demanda
@@ -76,6 +77,7 @@ OPTIONAL_GLOBAL_DEFAULTS = {
     "city_has_event": 0,
 }
 ZONE_HISTORY_COLS = [
+    "num_trips",
     "lag_1h",
     "lag_24h",
     "lag_168h",
@@ -683,7 +685,7 @@ def run_training(
     final_summary = {
         "task": "predict_max_demand_zone",
         "problem_type": "multiclass_classification",
-        "target_definition": "Zona pu_location_id con mayor target_n_trips por timestamp_hour",
+        "target_definition": "Zona pu_location_id con mayor target_n_trips (horizonte t+1) por timestamp_hour",
         "top_k_values": top_k_values,
         "random_state": random_state,
         "feature_scope": feature_scope,
