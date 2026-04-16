@@ -24,7 +24,8 @@ def split_model_stress_spark(
 
     - Usa `time_col` solo para hacer el corte temporal.
     - Respeta `gap_steps` entre train/val y val/test.
-    - Elimina de salida: `time_col`, `target_col`, columnas base y `extra_drop_cols`.
+    - Elimina de salida: `time_col`, columnas base y `extra_drop_cols`.
+    - Mantiene `target_col` en salida para facilitar analisis/experimentacion.
     - Añade `label_col` a partir de `target_col` casteado a double.
     - Devuelve:
         * con val_frac > 0: train_df, val_df, test_df
@@ -45,13 +46,21 @@ def split_model_stress_spark(
     if target_col not in df.columns:
         raise ValueError(f"El dataset debe incluir la columna target '{target_col}'.")
 
-    base_drop_cols = [
+    # Columnas comunes a eliminar en cualquier configuración.
+    base_drop_cols_all = [
         "date",
-        "target_is_stress_t1",
         "is_stress_now",
+        "target_stress_t1",
+        "target_stress_t3",
+        "target_stress_t24",
+        "target_is_stress_t1",
+        "target_is_stress_t3",
+        "target_is_stress_t24",
     ]
+    # Conservar la target elegida y eliminar el resto de targets.
+    base_drop_cols = [c for c in base_drop_cols_all if c != target_col]
     extra = list(extra_drop_cols) if extra_drop_cols is not None else []
-    drop_cols = list(dict.fromkeys(base_drop_cols + extra + [time_col, target_col]))
+    drop_cols = list(dict.fromkeys(base_drop_cols + extra + [time_col]))
 
     # 1) Limpiar y normalizar la columna temporal como hace pandas
     out = (

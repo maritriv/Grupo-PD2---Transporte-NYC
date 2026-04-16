@@ -16,6 +16,8 @@ from src.procesamiento.capa3.common.externals import (
 )
 from src.procesamiento.capa3.common.io import iter_month_partitions, safe_remove_dir, write_partitioned_dataset
 
+TARGET_HORIZONS = [1, 3, 24]
+
 NEEDED_TLC_COLS = [
     "date",
     "year",
@@ -56,7 +58,9 @@ FINAL_COLS = [
     "n_cuisines_zone",
     "rent_price_zone",
     # Target
-    "target_n_trips",
+    "target_n_trips_t1",
+    "target_n_trips_t3",
+    "target_n_trips_t24",
 ]
 
 
@@ -394,8 +398,9 @@ def build_model_table(
     )
     df["rent_price_zone"] = mapped_rent["rent_price_zone"]
 
-    # Target a horizonte de 1 hora (t+1) por zona.
-    df["target_n_trips"] = grp["num_trips"].shift(-1)
+    # Targets multi-horizonte por zona (t+1h, t+3h, t+24h).
+    for h in TARGET_HORIZONS:
+        df[f"target_n_trips_t{h}"] = grp["num_trips"].shift(-h)
     df["hour_block_3h"] = (pd.to_numeric(df["hour"], errors="coerce") // 3).astype("Int8")
 
     if "city_n_events" not in df.columns:
@@ -442,7 +447,9 @@ def build_model_table(
         "day_of_week",
         "pu_location_id",
         "num_trips",
-        "target_n_trips",
+        "target_n_trips_t1",
+        "target_n_trips_t3",
+        "target_n_trips_t24",
     ]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce").astype("Int32")
@@ -677,20 +684,20 @@ def build_demand_zone_dataset(
                 if df_month_out.empty:
                     continue
 
-                # Resolver target t+1 sin perder fronteras entre meses:
+                # Resolver targets multi-horizonte sin perder fronteras entre meses:
                 # las filas sin futuro inmediato quedan en pending y se emiten
                 # cuando se procese el siguiente mes.
                 combined = pd.concat([pending_rows, df_month_out], ignore_index=True)
                 combined = combined.sort_values(["pu_location_id", "timestamp_hour"]).reset_index(drop=True)
-                combined["target_n_trips"] = (
-                    combined.groupby("pu_location_id", sort=False)["num_trips"].shift(-1)
-                )
-                combined["target_n_trips"] = pd.to_numeric(
-                    combined["target_n_trips"], errors="coerce"
-                ).astype("Int32")
+                for h in TARGET_HORIZONS:
+                    col = f"target_n_trips_t{h}"
+                    combined[col] = combined.groupby("pu_location_id", sort=False)["num_trips"].shift(-h)
+                    combined[col] = pd.to_numeric(combined[col], errors="coerce").astype("Int32")
 
-                emit = combined[combined["target_n_trips"].notna()].copy()
-                pending_rows = combined[combined["target_n_trips"].isna()].copy()
+                max_h = max(TARGET_HORIZONS)
+                max_col = f"target_n_trips_t{max_h}"
+                emit = combined[combined[max_col].notna()].copy()
+                pending_rows = combined[combined[max_col].isna()].copy()
 
                 if not emit.empty:
                     write_partitioned_dataset(

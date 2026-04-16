@@ -6,13 +6,13 @@ Entrena modelos para predecir la zona de maxima demanda por franja horaria.
 Formulacion elegida
 -------------------
 La capa 3 EX1(a) deja un panel por (timestamp_hour, pu_location_id) donde
-`target_n_trips` representa la demanda observada en horizonte t+1 (una hora
+`target_n_trips_t1` representa la demanda observada en horizonte t+1 (una hora
 hacia adelante) para la zona de pickup `pu_location_id`.
 
 Para convertirlo en un problema de clasificacion multiclase:
 
 1. Cada muestra pasa a ser una unica hora (`timestamp_hour`).
-2. El target es la zona con mayor `target_n_trips` en esa hora.
+2. El target es la zona con mayor `target_n_trips_t1` en esa hora.
 3. En caso de empate, se elige la zona con menor `pu_location_id` para que la
    etiqueta sea determinista.
 4. Las features se construyen con:
@@ -58,6 +58,7 @@ DEFAULT_INPUT_DIR = "data/aggregated/ex1a/df_demand_zone_hour_day"
 DEFAULT_OUTPUT_DIR = "outputs/ml/max_demand_zone"
 RANDOM_STATE = 42
 SUPPORTED_MODEL_NAMES = ["logistic_regression", "random_forest", "xgboost"]
+TARGET_COL = "target_n_trips_t1"
 
 GLOBAL_FEATURE_COLS = [
     "month",
@@ -88,7 +89,7 @@ CORE_REQUIRED_COLS = [
     "timestamp_hour",
     "date",
     "pu_location_id",
-    "target_n_trips",
+    TARGET_COL,
     "month",
     "hour",
     "hour_block_3h",
@@ -145,7 +146,7 @@ def normalize_panel(
 
     int_like_cols = [
         "pu_location_id",
-        "target_n_trips",
+        TARGET_COL,
         "month",
         "hour",
         "hour_block_3h",
@@ -165,7 +166,7 @@ def normalize_panel(
     for col in float_like_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    df = df.dropna(subset=["timestamp_hour", "date", "pu_location_id", "target_n_trips"])
+    df = df.dropna(subset=["timestamp_hour", "date", "pu_location_id", TARGET_COL])
 
     if min_date is not None:
         df = df[df["date"] >= pd.to_datetime(min_date)]
@@ -190,28 +191,28 @@ def build_multiclass_dataset(df_panel: pd.DataFrame) -> tuple[pd.DataFrame, dict
         raise ValueError("El dataset EX1(a) esta vacio tras la normalizacion.")
 
     winners_sorted = df_panel.sort_values(
-        ["timestamp_hour", "target_n_trips", "pu_location_id"],
+        ["timestamp_hour", TARGET_COL, "pu_location_id"],
         ascending=[True, False, True],
     )
     winners = (
         winners_sorted.groupby("timestamp_hour", as_index=False)
-        .first()[["timestamp_hour", "date", "pu_location_id", "target_n_trips"]]
+        .first()[["timestamp_hour", "date", "pu_location_id", TARGET_COL]]
         .rename(
             columns={
                 "pu_location_id": "target_zone_id",
-                "target_n_trips": "winning_trips",
+                TARGET_COL: "winning_trips",
             }
         )
     )
 
     max_trips = (
-        df_panel.groupby("timestamp_hour", as_index=False)["target_n_trips"]
+        df_panel.groupby("timestamp_hour", as_index=False)[TARGET_COL]
         .max()
-        .rename(columns={"target_n_trips": "_max_trips"})
+        .rename(columns={TARGET_COL: "_max_trips"})
     )
     ties = (
         df_panel.merge(max_trips, on="timestamp_hour", how="left")
-        .loc[lambda x: x["target_n_trips"] == x["_max_trips"]]
+        .loc[lambda x: x[TARGET_COL] == x["_max_trips"]]
         .groupby("timestamp_hour", as_index=False)
         .size()
         .rename(columns={"size": "n_tied_winners"})
@@ -685,7 +686,7 @@ def run_training(
     final_summary = {
         "task": "predict_max_demand_zone",
         "problem_type": "multiclass_classification",
-        "target_definition": "Zona pu_location_id con mayor target_n_trips (horizonte t+1) por timestamp_hour",
+        "target_definition": "Zona pu_location_id con mayor target_n_trips_t1 (horizonte t+1) por timestamp_hour",
         "top_k_values": top_k_values,
         "random_state": random_state,
         "feature_scope": feature_scope,

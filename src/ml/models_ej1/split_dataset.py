@@ -84,11 +84,17 @@ def split_model_stress(
     if target_col not in df.columns:
         raise ValueError(f"El dataset debe incluir la columna target '{target_col}'.")
 
-    base_drop_cols = list(drop_cols) if drop_cols is not None else [
+    base_drop_cols = [
         "date",
-        "target_is_stress_t1",
         "is_stress_now",
+        "target_stress_t1",
+        "target_stress_t3",
+        "target_stress_t24",
+        "target_is_stress_t1",
+        "target_is_stress_t3",
+        "target_is_stress_t24",
     ]
+    extra_drop = list(drop_cols) if drop_cols is not None else []
     out = df.copy()
     out[time_col] = pd.to_datetime(out[time_col], errors="coerce")
     out = out.dropna(subset=[time_col]).copy()
@@ -153,7 +159,7 @@ def split_model_stress(
             "Revisa train_frac/val_frac/gap_steps."
         )
 
-    cols_to_remove = set(base_drop_cols + [time_col, target_col])
+    cols_to_remove = set(base_drop_cols + extra_drop + [time_col, target_col])
 
     def _to_xy(split_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
         y = split_df[target_col].copy()

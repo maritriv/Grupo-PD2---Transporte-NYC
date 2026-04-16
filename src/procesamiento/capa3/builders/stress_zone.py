@@ -22,6 +22,10 @@ from src.procesamiento.capa3.common.io import (
     write_partitioned_dataset,
 )
 
+TARGET_HORIZONS = [1, 3, 24]
+TARGET_STRESS_COLS = [f"target_stress_t{h}" for h in TARGET_HORIZONS]
+TARGET_IS_STRESS_COLS = [f"target_is_stress_t{h}" for h in TARGET_HORIZONS]
+
 NEEDED_TLC_COLS = [
     "date",
     "year",
@@ -73,11 +77,11 @@ MODEL_COLS = [
     "z_log1p_num_trips",
     "stress_score",
     "is_stress_now",
-    "target_stress_t1",
-    "target_is_stress_t1",
+    *TARGET_STRESS_COLS,
+    *TARGET_IS_STRESS_COLS,
 ]
 
-MODEL_PRELABEL_COLS = [c for c in MODEL_COLS if c not in {"is_stress_now", "target_is_stress_t1"}]
+MODEL_PRELABEL_COLS = [c for c in MODEL_COLS if c not in {"is_stress_now", *TARGET_IS_STRESS_COLS}]
 
 PANEL_COLS = [
     "pu_location_id",
@@ -147,6 +151,9 @@ class BuildStats:
     rent_rows: int = 0
     threshold_now: float = 0.0
     threshold_target: float = 0.0
+    threshold_target_t1: float = 0.0
+    threshold_target_t3: float = 0.0
+    threshold_target_t24: float = 0.0
 
 
 def _zscore_from_params(s: pd.Series, mean: float, std: float) -> pd.Series:
@@ -879,14 +886,14 @@ def build_stress_zone_dataset(
         mean_var, std_var = moment_var.mean_std()
         mean_log, std_log = moment_log.mean_std()
 
-        # Pass 2: features + stress + target_stress_t1 (sin etiquetas binarias)
+        # Pass 2: features + stress + targets multi-horizonte (sin etiquetas binarias)
         history_tail = pd.DataFrame(
             columns=["timestamp_hour", "pu_location_id", "n_trips", "avg_price", "price_variability"]
         )
         pending_rows = pd.DataFrame(columns=MODEL_PRELABEL_COLS)
 
         all_stress_parts: list[np.ndarray] = []
-        all_target_parts: list[np.ndarray] = []
+        all_target_parts: dict[int, list[np.ndarray]] = {h: [] for h in TARGET_HORIZONS}
 
         for mi, (year, month) in enumerate(sorted(month_keys_written), start=1):
             with console.status(
@@ -1009,12 +1016,15 @@ def build_stress_zone_dataset(
 
                 combined = pd.concat([pending_rows, current], ignore_index=True)
                 combined = combined.sort_values(["pu_location_id", "timestamp_hour"]).reset_index(drop=True)
-                combined["target_stress_t1"] = (
-                    combined.groupby("pu_location_id", sort=False)["stress_score"].shift(-1).astype("float32")
-                )
+                grp_combined = combined.groupby("pu_location_id", sort=False)
+                for h in TARGET_HORIZONS:
+                    col = f"target_stress_t{h}"
+                    combined[col] = grp_combined["stress_score"].shift(-h).astype("float32")
 
-                emit = combined[combined["target_stress_t1"].notna()].copy()
-                pending_rows = combined[combined["target_stress_t1"].isna()].copy()
+                max_h = max(TARGET_HORIZONS)
+                max_col = f"target_stress_t{max_h}"
+                emit = combined[combined[max_col].notna()].copy()
+                pending_rows = combined[combined[max_col].isna()].copy()
 
                 if drop_na_history:
                     needed_history = [
@@ -1034,7 +1044,7 @@ def build_stress_zone_dataset(
                     emit = emit.dropna(subset=[c for c in needed_history if c in emit.columns]).copy()
 
                 if drop_na_targets:
-                    emit = emit.dropna(subset=["target_stress_t1"]).copy()
+                    emit = emit.dropna(subset=TARGET_STRESS_COLS).copy()
 
                 if not emit.empty:
                     # Umbrales de clasificación sin leakage:
@@ -1046,15 +1056,19 @@ def build_stress_zone_dataset(
                             pd.to_numeric(train_emit["stress_score"], errors="coerce").dropna().to_numpy(dtype=float)
                         )
 
-                        # target_stress_t1 es t+1: usamos t < train_end para evitar usar
-                        # objetivos cuyo valor cae fuera de train.
-                        train_emit_target = train_emit[emit_ts.loc[train_emit.index] < train_end_ts]
-                        if not train_emit_target.empty:
-                            all_target_parts.append(
-                                pd.to_numeric(train_emit_target["target_stress_t1"], errors="coerce")
-                                .dropna()
-                                .to_numpy(dtype=float)
-                            )
+                        for h in TARGET_HORIZONS:
+                            target_col = f"target_stress_t{h}"
+                            # target_stress_tH es t+H: solo se usa si el valor objetivo cae en train.
+                            train_target_mask = (
+                                emit_ts.loc[train_emit.index] + pd.Timedelta(hours=h)
+                            ) <= train_end_ts
+                            train_emit_target = train_emit.loc[train_target_mask]
+                            if not train_emit_target.empty:
+                                all_target_parts[h].append(
+                                    pd.to_numeric(train_emit_target[target_col], errors="coerce")
+                                    .dropna()
+                                    .to_numpy(dtype=float)
+                                )
 
                     write_partitioned_dataset(
                         emit,
@@ -1076,14 +1090,19 @@ def build_stress_zone_dataset(
         else:
             threshold_now = 0.0
 
-        if all_target_parts:
-            target_all = np.concatenate(all_target_parts)
-            threshold_target = float(np.quantile(target_all, stress_quantile))
-        else:
-            threshold_target = 0.0
+        target_thresholds: dict[int, float] = {}
+        for h in TARGET_HORIZONS:
+            if all_target_parts[h]:
+                target_all = np.concatenate(all_target_parts[h])
+                target_thresholds[h] = float(np.quantile(target_all, stress_quantile))
+            else:
+                target_thresholds[h] = 0.0
 
         stats.threshold_now = threshold_now
-        stats.threshold_target = threshold_target
+        stats.threshold_target = float(target_thresholds[1])
+        stats.threshold_target_t1 = float(target_thresholds[1])
+        stats.threshold_target_t3 = float(target_thresholds[3])
+        stats.threshold_target_t24 = float(target_thresholds[24])
 
         # Pass 3: etiquetado binario final + salida model-ready en disco
         model_files = list_all_parquets(tmp_model_dir)
@@ -1096,9 +1115,12 @@ def build_stress_zone_dataset(
                 df["is_stress_now"] = (
                     pd.to_numeric(df["stress_score"], errors="coerce").fillna(0.0) >= threshold_now
                 ).astype("Int8")
-                df["target_is_stress_t1"] = (
-                    pd.to_numeric(df["target_stress_t1"], errors="coerce").fillna(-np.inf) >= threshold_target
-                ).astype("Int8")
+                for h in TARGET_HORIZONS:
+                    target_col = f"target_stress_t{h}"
+                    target_is_col = f"target_is_stress_t{h}"
+                    df[target_is_col] = (
+                        pd.to_numeric(df[target_col], errors="coerce").fillna(-np.inf) >= target_thresholds[h]
+                    ).astype("Int8")
 
                 float_cols = [
                     "avg_price",
@@ -1124,7 +1146,7 @@ def build_stress_zone_dataset(
                     "z_price_variability",
                     "z_log1p_num_trips",
                     "stress_score",
-                    "target_stress_t1",
+                    *TARGET_STRESS_COLS,
                 ]
                 for c in float_cols:
                     if c in df.columns:
@@ -1135,7 +1157,13 @@ def build_stress_zone_dataset(
                     if c in df.columns:
                         df[c] = pd.to_numeric(df[c], errors="coerce").astype("Int32")
 
-                int8_cols = ["is_weekend", "hour_block_3h", "city_has_event", "is_stress_now", "target_is_stress_t1"]
+                int8_cols = [
+                    "is_weekend",
+                    "hour_block_3h",
+                    "city_has_event",
+                    "is_stress_now",
+                    *TARGET_IS_STRESS_COLS,
+                ]
                 for c in int8_cols:
                     if c in df.columns:
                         df[c] = pd.to_numeric(df[c], errors="coerce").astype("Int8")
@@ -1215,7 +1243,9 @@ def build_stress_zone_dataset(
         outputs.add_row(output_model_dataset_name, f"{stats.rows_model_out:,}", str(model_out_dir))
         outputs.add_row(output_panel_dataset_name, f"{stats.rows_panel_out:,}", str(panel_out_dir))
         outputs.add_row("stress_threshold_now", f"{stats.threshold_now:.4f}", "-")
-        outputs.add_row("target_threshold_t1", f"{stats.threshold_target:.4f}", "-")
+        outputs.add_row("target_threshold_t1", f"{stats.threshold_target_t1:.4f}", "-")
+        outputs.add_row("target_threshold_t3", f"{stats.threshold_target_t3:.4f}", "-")
+        outputs.add_row("target_threshold_t24", f"{stats.threshold_target_t24:.4f}", "-")
         outputs.add_row("anti_leakage_train_end", str(train_end_ts), "-")
         outputs.add_row("anti_leakage_val_start", str(split_bounds["val_start"]), "-")
         outputs.add_row("anti_leakage_test_start", str(split_bounds["test_start"]), "-")

@@ -19,7 +19,7 @@ def main() -> None:
     p = argparse.ArgumentParser(
         description=(
             "Construye datasets model-ready y de panel para stress urbano por zona-hora, "
-            "con targets target_stress_t1 y target_is_stress_t1."
+            "con targets multi-horizonte (t+1, t+3, t+24)."
         )
     )
     p.add_argument(
@@ -79,7 +79,7 @@ def main() -> None:
     p.add_argument(
         "--keep-na-targets",
         action="store_true",
-        help="Si se activa, no elimina filas con target t+1 nulo",
+        help="Si se activa, no elimina filas con targets (t+1/t+3/t+24) nulos",
     )
     p.add_argument(
         "--model-dataset-name",
@@ -114,7 +114,10 @@ def main() -> None:
     cfg.add_row("min_date", args.min_date)
     cfg.add_row("max_date", args.max_date)
     cfg.add_row("stress_quantile", str(args.stress_quantile))
-    cfg.add_row("targets", "target_stress_t1, target_is_stress_t1")
+    cfg.add_row(
+        "targets",
+        "target_stress_t1/t3/t24, target_is_stress_t1/t3/t24",
+    )
     cfg.add_row("mode", args.mode)
     cfg.add_row("keep_na_history", str(args.keep_na_history))
     cfg.add_row("keep_na_targets", str(args.keep_na_targets))
@@ -163,7 +166,9 @@ def main() -> None:
     summary.add_row("restaurants_rows", f"{stats.restaurants_rows:,}")
     summary.add_row("rent_rows", f"{stats.rent_rows:,}")
     summary.add_row("threshold_now", f"{stats.threshold_now:.4f}")
-    summary.add_row("threshold_target", f"{stats.threshold_target:.4f}")
+    summary.add_row("threshold_target_t1", f"{stats.threshold_target_t1:.4f}")
+    summary.add_row("threshold_target_t3", f"{stats.threshold_target_t3:.4f}")
+    summary.add_row("threshold_target_t24", f"{stats.threshold_target_t24:.4f}")
     console.print(summary)
 
     console.print(
