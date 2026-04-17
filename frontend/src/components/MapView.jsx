@@ -17,16 +17,20 @@ function getZoneIdFromFeature(feature) {
 
 function getColorFromScore(score) {
   if (score === null || score === undefined || Number.isNaN(score)) return "#d1d5db"
-  if (score < 0.33) return "#6cc36a"
-  if (score < 0.66) return "#e0a63a"
+  if (score <= 0.2) return "#6cc36a"
+  if (score <= 0.4) return "#a7c957"
+  if (score <= 0.6) return "#e0a63a"
+  if (score <= 0.8) return "#d97a45"
   return "#d4554a"
 }
 
-function getLevelLabel(score) {
-  if (score === null || score === undefined || Number.isNaN(score)) return "sin datos"
-  if (score < 0.33) return "low"
-  if (score < 0.66) return "medium"
-  return "high"
+function getStressLabel(score) {
+  if (score === null || score === undefined || Number.isNaN(score)) return "Sin datos"
+  if (score <= 0.2) return "Estable"
+  if (score <= 0.4) return "Estrés bajo"
+  if (score <= 0.6) return "Estrés moderado"
+  if (score <= 0.8) return "Estrés alto"
+  return "Crítico"
 }
 
 function formatDateTime(date) {
@@ -63,7 +67,7 @@ function StressLegend({ primaryColor }) {
             height: "14px",
             borderRadius: "999px",
             background:
-              "linear-gradient(90deg, #6cc36a 0%, #b7cf5f 20%, #e0a63a 50%, #d97a45 75%, #d4554a 100%)",
+              "linear-gradient(90deg, #6cc36a 0%, #a7c957 25%, #e0a63a 50%, #d97a45 75%, #d4554a 100%)",
             border: "1px solid #d1d5db",
           }}
         />
@@ -74,7 +78,7 @@ function StressLegend({ primaryColor }) {
       </div>
 
       <div style={{ fontSize: "12px", color: "#6b7280" }}>
-        Escala sintética del nivel de tensión urbana
+        Índice continuo de estrés urbano entre 0.0 y 1.0
       </div>
     </div>
   )
@@ -92,7 +96,7 @@ function PredictionControls({
   return (
     <div
       style={{
-        minWidth: "320px", // 🔥 más ancho el bloque
+        minWidth: "320px",
         display: "flex",
         flexDirection: "column",
         gap: "6px",
@@ -123,15 +127,15 @@ function PredictionControls({
         value={horizonHours}
         onChange={(e) => setHorizonHours(Number(e.target.value))}
         style={{
-          width: "220px",        // 🔥 más largo
-          padding: "4px 10px",   // 🔥 más fino
+          width: "220px",
+          padding: "4px 10px",
           borderRadius: "8px",
           border: "1px solid #d1d5db",
           fontSize: "13px",
           background: "#f9fafb",
           color: "#374151",
           cursor: "pointer",
-          alignSelf: "flex-end", // 🔥 alineado con "Base"
+          alignSelf: "flex-end",
         }}
       >
         <option value={0}>Ahora</option>
@@ -222,16 +226,16 @@ export default function MapView({
     const props = feature?.properties || {}
     const zoneId = getZoneIdFromFeature(feature)
     const score = scoreByZone.get(zoneId)
-    const level = getLevelLabel(score)
+    const label = getStressLabel(score)
     const zoneName = props.zone || props.Zone || `Zona ${zoneId ?? "-"}`
 
     layer.bindTooltip(
       `
-        <div style="min-width:140px">
+        <div style="min-width:150px">
           <strong>${zoneName}</strong><br/>
           ID zona: ${zoneId ?? "-"}<br/>
-          Score: ${score !== undefined ? Number(score).toFixed(2) : "sin datos"}<br/>
-          Nivel: ${level}
+          Índice: ${score !== undefined ? Number(score).toFixed(2) : "sin datos"}<br/>
+          Estado: ${label}
         </div>
       `,
       { sticky: true }

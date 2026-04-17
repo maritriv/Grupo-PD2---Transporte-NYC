@@ -1,5 +1,23 @@
 import { useEffect, useMemo, useState } from "react"
 
+function getStressLabel(score) {
+  if (score === null || score === undefined || Number.isNaN(score)) return "Sin datos"
+  if (score <= 0.2) return "Estable"
+  if (score <= 0.4) return "Estrés bajo"
+  if (score <= 0.6) return "Estrés moderado"
+  if (score <= 0.8) return "Estrés alto"
+  return "Crítico"
+}
+
+function getStressColor(score) {
+  if (score === null || score === undefined || Number.isNaN(score)) return "#6b7280"
+  if (score <= 0.2) return "#6cc36a"
+  if (score <= 0.4) return "#84a63a"
+  if (score <= 0.6) return "#c98b1f"
+  if (score <= 0.8) return "#d97a45"
+  return "#dc2626"
+}
+
 export default function AlertsPanel({ zones, primaryColor }) {
   const [zoneNames, setZoneNames] = useState({})
 
@@ -40,7 +58,7 @@ export default function AlertsPanel({ zones, primaryColor }) {
 
   const alerts = useMemo(() => {
     return [...zones]
-      .filter((z) => z.level === "high")
+      .filter((z) => Number(z.score) >= 0.6)
       .sort((a, b) => Number(b.score) - Number(a.score))
   }, [zones])
 
@@ -62,6 +80,9 @@ export default function AlertsPanel({ zones, primaryColor }) {
       ) : (
         alerts.map((z) => {
           const zoneName = zoneNames[Number(z.zone_id)] || `Zona ${z.zone_id}`
+          const score = Number(z.score)
+          const label = getStressLabel(score)
+          const labelColor = getStressColor(score)
 
           return (
             <div key={z.zone_id} style={{ marginBottom: "16px" }}>
@@ -74,9 +95,9 @@ export default function AlertsPanel({ zones, primaryColor }) {
                 {zoneName}
               </strong>
 
-              <div style={{ color: "#dc2626" }}>Estrés alto</div>
+              <div style={{ color: labelColor }}>{label}</div>
 
-              <small>Score: {Number(z.score).toFixed(2)}</small>
+              <small>Score: {score.toFixed(2)}</small>
             </div>
           )
         })
