@@ -21,8 +21,9 @@ outputs/
 # Archivo para pruebas
 pruebas.py
 
-# Ignorar todos los archivos PNG (opcional, si no quieres ninguno)
+# Ignorar todos los archivos PNG 
 *.png
+!frontend/public/macbrides.png
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
