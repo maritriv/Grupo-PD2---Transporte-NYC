@@ -29,30 +29,37 @@ function getLevelLabel(score) {
   return "high"
 }
 
+function formatDateTime(date) {
+  return new Intl.DateTimeFormat("es-ES", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)
+}
+
+/* ===================== LEGEND ===================== */
+
 function StressLegend({ primaryColor }) {
   return (
     <div style={{ marginBottom: "14px" }}>
       <div
         style={{
-          display: "flex",
+          display: "grid",
+          gridTemplateColumns: "auto 1fr auto",
           alignItems: "center",
-          gap: "10px",
+          gap: "12px",
           marginBottom: "6px",
         }}
       >
-        <span
-          style={{
-            fontSize: "14px",
-            fontWeight: 600,
-            color: primaryColor,
-          }}
-        >
+        <span style={{ fontSize: "14px", fontWeight: 600, color: primaryColor }}>
           Estable
         </span>
 
         <div
           style={{
-            flex: 1,
+            width: "100%",
             height: "14px",
             borderRadius: "999px",
             background:
@@ -61,13 +68,7 @@ function StressLegend({ primaryColor }) {
           }}
         />
 
-        <span
-          style={{
-            fontSize: "14px",
-            fontWeight: 600,
-            color: primaryColor,
-          }}
-        >
+        <span style={{ fontSize: "14px", fontWeight: 600, color: primaryColor }}>
           Crítico
         </span>
       </div>
@@ -79,7 +80,81 @@ function StressLegend({ primaryColor }) {
   )
 }
 
-export default function MapView({ zones, primaryColor }) {
+/* ===================== CONTROLS ===================== */
+
+function PredictionControls({
+  baseDate,
+  targetDate,
+  horizonHours,
+  setHorizonHours,
+  primaryColor,
+}) {
+  return (
+    <div
+      style={{
+        minWidth: "320px", // 🔥 más ancho el bloque
+        display: "flex",
+        flexDirection: "column",
+        gap: "6px",
+        alignItems: "flex-end",
+      }}
+    >
+      <div
+        style={{
+          fontSize: "13px",
+          color: "#6b7280",
+          textAlign: "right",
+          lineHeight: 1.35,
+        }}
+      >
+        <div>
+          <span style={{ fontWeight: 700, color: primaryColor }}>Base:</span>{" "}
+          {formatDateTime(baseDate)}
+        </div>
+        <div>
+          <span style={{ fontWeight: 700, color: primaryColor }}>
+            Predicción para:
+          </span>{" "}
+          {formatDateTime(targetDate)}
+        </div>
+      </div>
+
+      <select
+        value={horizonHours}
+        onChange={(e) => setHorizonHours(Number(e.target.value))}
+        style={{
+          width: "220px",        // 🔥 más largo
+          padding: "4px 10px",   // 🔥 más fino
+          borderRadius: "8px",
+          border: "1px solid #d1d5db",
+          fontSize: "13px",
+          background: "#f9fafb",
+          color: "#374151",
+          cursor: "pointer",
+          alignSelf: "flex-end", // 🔥 alineado con "Base"
+        }}
+      >
+        <option value={0}>Ahora</option>
+        {Array.from({ length: 24 }, (_, i) => i + 1).map((h) => (
+          <option key={h} value={h}>
+            +{h}h
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+/* ===================== MAP ===================== */
+
+export default function MapView({
+  zones,
+  primaryColor,
+  baseDate,
+  targetDate,
+  horizonHours,
+  setHorizonHours,
+}) {
   const [geojsonData, setGeojsonData] = useState(null)
   const [geojsonError, setGeojsonError] = useState("")
   const [debugInfo, setDebugInfo] = useState("")
@@ -99,13 +174,13 @@ export default function MapView({ zones, primaryColor }) {
         const data = await res.json()
 
         if (!data || data.type !== "FeatureCollection" || !Array.isArray(data.features)) {
-          throw new Error("El archivo no es un GeoJSON válido de tipo FeatureCollection")
+          throw new Error("El archivo no es un GeoJSON válido")
         }
 
-        setDebugInfo(`GeoJSON cargado correctamente: ${data.features.length} zonas`)
+        setDebugInfo(`GeoJSON cargado: ${data.features.length} zonas`)
         setGeojsonData(data)
       } catch (error) {
-        console.error("Error cargando GeoJSON:", error)
+        console.error(error)
         setGeojsonError("No se pudo cargar el mapa geográfico")
         setDebugInfo(String(error))
       }
@@ -116,11 +191,9 @@ export default function MapView({ zones, primaryColor }) {
 
   const scoreByZone = useMemo(() => {
     const map = new Map()
-
     zones.forEach((z) => {
       map.set(Number(z.zone_id), Number(z.score))
     })
-
     return map
   }, [zones])
 
@@ -128,10 +201,18 @@ export default function MapView({ zones, primaryColor }) {
     const zoneId = getZoneIdFromFeature(feature)
     const score = scoreByZone.get(zoneId)
 
+    if (score === undefined) {
+      return {
+        fillColor: "#e5e7eb",
+        weight: 0.7,
+        color: "#ffffff",
+        fillOpacity: 0.28,
+      }
+    }
+
     return {
       fillColor: getColorFromScore(score),
       weight: 0.8,
-      opacity: 1,
       color: "#ffffff",
       fillOpacity: 0.72,
     }
@@ -144,21 +225,17 @@ export default function MapView({ zones, primaryColor }) {
     const level = getLevelLabel(score)
     const zoneName = props.zone || props.Zone || `Zona ${zoneId ?? "-"}`
 
-    try {
-      layer.bindTooltip(
-        `
-          <div style="min-width:140px">
-            <strong>${zoneName}</strong><br/>
-            ID zona: ${zoneId ?? "-"}<br/>
-            Score: ${score !== undefined ? Number(score).toFixed(2) : "sin datos"}<br/>
-            Nivel: ${level}
-          </div>
-        `,
-        { sticky: true }
-      )
-    } catch (error) {
-      console.error("Error creando tooltip:", error)
-    }
+    layer.bindTooltip(
+      `
+        <div style="min-width:140px">
+          <strong>${zoneName}</strong><br/>
+          ID zona: ${zoneId ?? "-"}<br/>
+          Score: ${score !== undefined ? Number(score).toFixed(2) : "sin datos"}<br/>
+          Nivel: ${level}
+        </div>
+      `,
+      { sticky: true }
+    )
   }
 
   return (
@@ -170,13 +247,33 @@ export default function MapView({ zones, primaryColor }) {
         padding: "20px",
       }}
     >
-      <h2 style={{ marginTop: 0, color: primaryColor }}>
-        Mapa de Estrés Urbano
-      </h2>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: "20px",
+          marginBottom: "8px",
+        }}
+      >
+        <div>
+          <h2 style={{ marginTop: 0, marginBottom: "10px", color: primaryColor }}>
+            Mapa de Estrés Urbano
+          </h2>
 
-      <p style={{ color: "#6b7280", marginBottom: "16px" }}>
-        Visualización geográfica del nivel de tensión por zona
-      </p>
+          <p style={{ color: "#6b7280", margin: 0 }}>
+            Visualización geográfica del nivel de tensión por zona
+          </p>
+        </div>
+
+        <PredictionControls
+          baseDate={baseDate}
+          targetDate={targetDate}
+          horizonHours={horizonHours}
+          setHorizonHours={setHorizonHours}
+          primaryColor={primaryColor}
+        />
+      </div>
 
       <StressLegend primaryColor={primaryColor} />
 
@@ -186,27 +283,10 @@ export default function MapView({ zones, primaryColor }) {
           borderRadius: "14px",
           overflow: "hidden",
           border: "1px solid #e5e7eb",
-          background: "#f9fafb",
         }}
       >
         {geojsonError ? (
-          <div
-            style={{
-              height: "100%",
-              display: "grid",
-              placeItems: "center",
-              color: "#dc2626",
-              padding: "20px",
-              textAlign: "center",
-            }}
-          >
-            <div>
-              <div>{geojsonError}</div>
-              <div style={{ marginTop: "8px", fontSize: "12px", color: "#6b7280" }}>
-                {debugInfo}
-              </div>
-            </div>
-          </div>
+          <div style={{ color: "red", padding: "20px" }}>{geojsonError}</div>
         ) : geojsonData ? (
           <MapContainer
             center={[40.7128, -74.006]}
@@ -216,31 +296,16 @@ export default function MapView({ zones, primaryColor }) {
           >
             <ZoomControl position="topright" />
 
-            <TileLayer
-              attribution='&copy; OpenStreetMap contributors &copy; CARTO'
-              url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-            />
+            <TileLayer url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" />
 
             <GeoJSON
-              key="nyc-zones-layer"
               data={geojsonData}
               style={styleFeature}
               onEachFeature={onEachFeature}
             />
           </MapContainer>
         ) : (
-          <div
-            style={{
-              height: "100%",
-              display: "grid",
-              placeItems: "center",
-              color: "#6b7280",
-              textAlign: "center",
-              padding: "20px",
-            }}
-          >
-            {debugInfo || "Cargando mapa…"}
-          </div>
+          <div style={{ padding: "20px" }}>Cargando mapa…</div>
         )}
       </div>
     </div>

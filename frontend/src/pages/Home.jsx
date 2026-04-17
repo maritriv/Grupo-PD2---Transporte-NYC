@@ -1,6 +1,5 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { getMapData } from "../api/client"
-import Controls from "../components/Controls"
 import MapView from "../components/MapView"
 import KPICards from "../components/KPICards"
 import AlertsPanel from "../components/AlertsPanel"
@@ -8,24 +7,35 @@ import HistoryChart from "../components/HistoryChart"
 
 const PRIMARY_COLOR = "#162a5a"
 
-export default function Home() {
-  const now = new Date()
+function addHours(date, hours) {
+  const result = new Date(date)
+  result.setHours(result.getHours() + hours)
+  return result
+}
 
-  const [day, setDay] = useState(now.getDay())
-  const [hour, setHour] = useState(now.getHours())
+export default function Home() {
+  const [baseDate] = useState(new Date())
+  const [horizonHours, setHorizonHours] = useState(0)
   const [zones, setZones] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
 
+  const targetDate = useMemo(() => {
+    return addHours(baseDate, horizonHours)
+  }, [baseDate, horizonHours])
+
+  const targetDay = targetDate.getDay()
+  const targetHour = targetDate.getHours()
+
   useEffect(() => {
     loadData()
-  }, [day, hour])
+  }, [targetDay, targetHour])
 
   async function loadData() {
     try {
       setLoading(true)
       setError("")
-      const data = await getMapData(day, hour)
+      const data = await getMapData(targetDay, targetHour)
       setZones(data?.zones || [])
     } catch (err) {
       console.error(err)
@@ -47,8 +57,6 @@ export default function Home() {
       }}
     >
       <div style={{ maxWidth: "1400px", margin: "0 auto" }}>
-
-        {/* HEADER */}
         <header
           style={{
             display: "flex",
@@ -62,11 +70,11 @@ export default function Home() {
             boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: "18px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "22px" }}>
             <img
               src="/macbrides.png"
               alt="MACBRIDES"
-              style={{ height: "70px", objectFit: "contain" }}
+              style={{ height: "90px", objectFit: "contain" }}
             />
 
             <div>
@@ -88,13 +96,6 @@ export default function Home() {
               </p>
             </div>
           </div>
-
-          <Controls
-            day={day}
-            hour={hour}
-            setDay={setDay}
-            setHour={setHour}
-          />
         </header>
 
         {loading && <p>Cargando...</p>}
@@ -109,7 +110,15 @@ export default function Home() {
             }}
           >
             <div>
-              <MapView zones={zones} primaryColor={PRIMARY_COLOR} />
+              <MapView
+                zones={zones}
+                primaryColor={PRIMARY_COLOR}
+                baseDate={baseDate}
+                targetDate={targetDate}
+                horizonHours={horizonHours}
+                setHorizonHours={setHorizonHours}
+              />
+
               <div style={{ marginTop: "20px" }}>
                 <KPICards zones={zones} primaryColor={PRIMARY_COLOR} />
               </div>
