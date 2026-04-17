@@ -214,6 +214,9 @@ uv run -m src.extraccion.download_from_minio --no-skip
 > Es necesario que el archivo `credentials.json` esté configurado en la raíz del proyecto antes de ejecutar la descarga.
 
 ## Ejecución de la página web
+Este proyecto puede ejecutarse de varias formas, dependiendo de si quieres levantar `backend` y `frontend` por separado o todo a la vez.
+
+### Opción 1: Ejecución manual
 **1. Levantar el backend**
 
 Abre una terminal en la raíz del proyecto y ejecuta:
@@ -248,6 +251,28 @@ Vite te mostrará una URL, normalmente:
 http://localhost:5173
 ```
 Abre esa dirección en el navegador.
+
+### Opción 2: Instalación completa del proyecto
+
+Si es la primera vez que clonas el proyecto, puedes instalar todo de una vez:
+```bash
+npm run setup
+```
+Esto ejecuta:
+
+- Instalación del backend (dependencias Python)
+- Instalación del frontend (npm)
+
+Puedes levantar backend + frontend automáticamente con un solo comando:
+```bash
+npm run dev
+```
+Esto usa `concurrently` y ejecuta:
+
+- Backend: `uvicorn`
+- Frontend: `vite`
+
+Verás ambos logs en la misma terminal.
 
 ### ⚙️ Scripts disponibles
 Desde la raíz del proyecto:
