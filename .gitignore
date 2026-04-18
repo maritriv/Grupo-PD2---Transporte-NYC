@@ -24,6 +24,7 @@ pruebas.py
 # Ignorar todos los archivos PNG 
 *.png
 !frontend/public/macbrides.png
+!docs/ejercicios/ex1c/analisis_demanda_files/*.png
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
