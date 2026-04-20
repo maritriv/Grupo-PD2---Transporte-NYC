@@ -63,10 +63,6 @@ def warn_memory_config() -> None:
         if available_gb < 2:
             print(
                 f"MEMORIA BAJA: {available_gb:.1f}GB disponibles de {total_gb:.1f}GB.\n"
-                f"   Considera:\n"
-                f"   - Cerrar otras aplicaciones\n"
-                f"   - Reducir --sample-frac o usar filtros de fecha\n"
-                f"   - Aumentar Dask blocksize (--dask-blocksize '32MB')"
             )
     except Exception:
         pass

@@ -90,7 +90,9 @@ class SparkManager:
                 .config("spark.ui.port", conf.get('ui_port', 4050))
                 .config("spark.sql.shuffle.partitions", conf.get('shuffle_partitions', 16))
                 .config("spark.ui.showConsoleProgress", "false")
-                .config("spark.sql.execution.arrow.pyspark.enabled", "true") # Acelera Pandas <-> Spark
+                .config("spark.sql.execution.arrow.pyspark.enabled", "false")
+                .config("spark.driver.maxResultSize", "0")
+                .config("spark.sql.parquet.enableVectorizedReader", "false")
                 .config(
                     "spark.driver.extraJavaOptions",
                     f"-Djava.io.tmpdir={temp_path} -Dlog4j.configurationFile=file:{log4j_path}"
