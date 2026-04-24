@@ -13,7 +13,10 @@ from src.extraccion.download_events_data import download_events_range
 from src.extraccion.download_meteo_data import download_meteo_range
 from src.extraccion.download_rent_data import download_rent_snapshot 
 from src.extraccion.download_restaurants_data import download_restaurants_range
-from src.extraccion.download_taxi_zones import download_taxi_lookup 
+from src.extraccion.download_taxi_zones import (
+    download_taxi_lookup,
+    download_taxi_zones_shapefile,
+)
 
 from config.settings import (
     obtener_ruta,
@@ -160,8 +163,13 @@ def download_all(mode: DownloadMode):
 
     # 6. TAXI ZONES
     if mode in (DownloadMode.ALL, DownloadMode.ZONES):
-        results['zones'] = run_download_task(
+        results['zones_lookup'] = run_download_task(
             "Taxi Zones Lookup", "yellow", download_taxi_lookup,
+            out_dir=obtener_ruta("data/external")
+        )
+
+        results['zones_shapefile'] = run_download_task(
+            "Taxi Zones Shapefile", "yellow", download_taxi_zones_shapefile,
             out_dir=obtener_ruta("data/external")
         )
 

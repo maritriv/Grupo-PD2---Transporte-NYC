@@ -38,8 +38,8 @@ def main() -> None:
     print_stage("PASO 2", "Ensamblaje datasets para ejercicios")
     
     ejercicios = [
-        # "src.procesamiento.capa3.ejercicios.ex1a_demand",   # Ej.1a: predecir zona máxima demanda
-        # "src.procesamiento.capa3.ejercicios.ex1b_tips",     # Ej.1b: predecir propina
+        "src.procesamiento.capa3.ejercicios.ex1a_demand",   # Ej.1a: predecir zona máxima demanda
+        "src.procesamiento.capa3.ejercicios.ex1b_tips",     # Ej.1b: predecir propina
         "src.procesamiento.capa3.ejercicios.ex1c_patterns", # Ej.1c: clasif. demanda bajo/medio/alto
         "src.procesamiento.capa3.ejercicios.ex1d_socioeconomic", # Ej.1d: poder adquisitivo
         "src.procesamiento.capa3.ejercicios.ex2_stress",    # Ej.2: estrés urbano
