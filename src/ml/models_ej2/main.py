@@ -10,7 +10,7 @@ def main() -> None:
     print_stage("ML MODELOS EJERCICIO 2", "Baselines y modelos finales")
 
     modulos = [
-        "src.ml.models_ej2.a_model_baseline",
+        #"src.ml.models_ej2.a_model_baseline",
         "src.ml.models_ej2.b_model_random_forest",
         "src.ml.models_ej2.c_model_boosting",
         "src.ml.models_ej2.d_model_nn",

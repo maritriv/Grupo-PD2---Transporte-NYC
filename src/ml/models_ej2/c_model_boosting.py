@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import joblib
 import numpy as np
 import pandas as pd
 from rich.table import Table
@@ -21,52 +22,174 @@ from xgboost import XGBClassifier, XGBRegressor
 
 from config.pipeline_runner import console, print_done, print_stage
 
-TARGET_REG = "stress_score"
-TARGET_CLF = "is_stress"
-VALID_MODES = {"operational", "predictive"}
+TARGET_REG = "target_stress_t1"
+TARGET_CLF = "target_is_stress_t1"
+
+DEFAULT_DATASET_DIR = "data/aggregated/ex_stress/df_stress_zone_hour_day"
+DEFAULT_OUTPUTS_DIR = "outputs/ml/ej2/boosting"
+
+RANDOM_STATE = 42
+
+TARGET_COLS = {
+    "target_stress_t1",
+    "target_stress_t3",
+    "target_stress_t24",
+    "target_is_stress_t1",
+    "target_is_stress_t3",
+    "target_is_stress_t24",
+}
+
+DROP_FEATURE_COLS = {
+    "date",
+    "datetime",
+    "pickup_datetime",
+    "dropoff_datetime",
+    "timestamp",
+}
 
 
-# -----------------------------------------------------------------------------
-# Helpers
-# -----------------------------------------------------------------------------
+def project_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def resolve_project_path(path_like: str | Path) -> Path:
+    path = Path(path_like)
+    if path.is_absolute():
+        return path.resolve()
+    return (project_root() / path).resolve()
+
+
 def rmse(y_true: pd.Series, y_pred: np.ndarray) -> float:
     return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
 
-def load_processed_splits(
-    splits_dir: str = "data/ml/splits_processed",
-    prefix: str = "dataset_completo",
-    mode: str = "operational",
+def read_partitioned_parquet(dataset_dir: str | Path) -> pd.DataFrame:
+    base = resolve_project_path(dataset_dir)
+    if not base.exists():
+        raise FileNotFoundError(f"No existe el dataset de EX2: {base}")
+
+    files = sorted(base.rglob("*.parquet"))
+    if not files:
+        raise FileNotFoundError(f"No se encontraron parquets en: {base}")
+
+    console.print(f"[cyan]Leyendo parquets[/cyan] -> {len(files):,} archivos")
+    return pd.concat([pd.read_parquet(fp) for fp in files], ignore_index=True)
+
+
+def add_time_sort_column(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+
+    if "datetime" in out.columns:
+        out["_sort_time"] = pd.to_datetime(out["datetime"], errors="coerce")
+    elif "timestamp" in out.columns:
+        out["_sort_time"] = pd.to_datetime(out["timestamp"], errors="coerce")
+    elif "date" in out.columns and "hour" in out.columns:
+        out["_sort_time"] = pd.to_datetime(out["date"], errors="coerce") + pd.to_timedelta(
+            pd.to_numeric(out["hour"], errors="coerce").fillna(0), unit="h"
+        )
+    elif {"year", "month", "day", "hour"}.issubset(out.columns):
+        out["_sort_time"] = pd.to_datetime(
+            dict(
+                year=pd.to_numeric(out["year"], errors="coerce"),
+                month=pd.to_numeric(out["month"], errors="coerce"),
+                day=pd.to_numeric(out["day"], errors="coerce"),
+            ),
+            errors="coerce",
+        ) + pd.to_timedelta(pd.to_numeric(out["hour"], errors="coerce").fillna(0), unit="h")
+    else:
+        out["_sort_time"] = pd.RangeIndex(len(out))
+
+    return out
+
+
+def prepare_targets(df: pd.DataFrame) -> pd.DataFrame:
+    if TARGET_REG not in df.columns:
+        raise ValueError(f"Falta target de regresión: {TARGET_REG}")
+    if TARGET_CLF not in df.columns:
+        raise ValueError(f"Falta target de clasificación: {TARGET_CLF}")
+
+    out = df.copy()
+    out[TARGET_REG] = pd.to_numeric(out[TARGET_REG], errors="coerce")
+    out[TARGET_CLF] = pd.to_numeric(out[TARGET_CLF], errors="coerce")
+
+    out = out.dropna(subset=[TARGET_REG, TARGET_CLF])
+    out[TARGET_CLF] = out[TARGET_CLF].astype(int)
+
+    return out.reset_index(drop=True)
+
+
+def split_train_val_test(
+    df: pd.DataFrame,
+    val_size: float = 0.15,
+    test_size: float = 0.15,
 ) -> dict[str, pd.DataFrame]:
-    if mode not in VALID_MODES:
-        raise ValueError(f"Modo no soportado: {mode}. Usa uno de {sorted(VALID_MODES)}")
+    if val_size <= 0 or test_size <= 0 or val_size + test_size >= 1:
+        raise ValueError("val_size y test_size deben estar entre 0 y 1 y sumar menos de 1.")
 
-    project_root = Path(__file__).resolve().parents[3]
-    base = (project_root / splits_dir).resolve()
+    df = add_time_sort_column(df)
+    df = df.sort_values("_sort_time").reset_index(drop=True)
 
-    train_fp = base / f"{prefix}_{mode}_train.parquet"
-    val_fp = base / f"{prefix}_{mode}_val.parquet"
-    test_fp = base / f"{prefix}_{mode}_test.parquet"
+    n = len(df)
+    n_test = int(n * test_size)
+    n_val = int(n * val_size)
 
-    for fp in [train_fp, val_fp, test_fp]:
-        if not fp.exists():
-            raise FileNotFoundError(f"No existe el split procesado esperado: {fp}")
+    train = df.iloc[: n - n_val - n_test].copy()
+    val = df.iloc[n - n_val - n_test : n - n_test].copy()
+    test = df.iloc[n - n_test :].copy()
 
-    return {
-        "train": pd.read_parquet(train_fp),
-        "val": pd.read_parquet(val_fp),
-        "test": pd.read_parquet(test_fp),
-    }
+    return {"train": train, "val": val, "test": test}
 
 
 def split_xy(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
-    if TARGET_REG not in df.columns or TARGET_CLF not in df.columns:
-        raise ValueError(f"Faltan targets '{TARGET_REG}' y/o '{TARGET_CLF}' en el split.")
-
-    x = df.drop(columns=[TARGET_REG, TARGET_CLF]).copy()
     y_reg = df[TARGET_REG].copy()
-    y_clf = df[TARGET_CLF].copy()
+    y_clf = df[TARGET_CLF].copy().astype(int)
+
+    drop_cols = set(TARGET_COLS) | set(DROP_FEATURE_COLS) | {"_sort_time"}
+    x = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore").copy()
+
     return x, y_reg, y_clf
+
+
+def preprocess_features(
+    x_train: pd.DataFrame,
+    x_val: pd.DataFrame,
+    x_test: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    # Convertir booleanos a enteros.
+    for df in [x_train, x_val, x_test]:
+        bool_cols = df.select_dtypes(include=["bool"]).columns
+        for col in bool_cols:
+            df[col] = df[col].astype(int)
+
+    cat_cols = x_train.select_dtypes(include=["object", "category", "string"]).columns.tolist()
+
+    x_train = pd.get_dummies(x_train, columns=cat_cols, dummy_na=True)
+    x_val = pd.get_dummies(x_val, columns=[c for c in cat_cols if c in x_val.columns], dummy_na=True)
+    x_test = pd.get_dummies(x_test, columns=[c for c in cat_cols if c in x_test.columns], dummy_na=True)
+
+    x_val = x_val.reindex(columns=x_train.columns, fill_value=0)
+    x_test = x_test.reindex(columns=x_train.columns, fill_value=0)
+
+    for df in [x_train, x_val, x_test]:
+        for col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Quitamos columnas completamente nulas en train.
+    all_null_cols = [c for c in x_train.columns if x_train[c].isna().all()]
+    if all_null_cols:
+        x_train = x_train.drop(columns=all_null_cols)
+        x_val = x_val.drop(columns=all_null_cols, errors="ignore")
+        x_test = x_test.drop(columns=all_null_cols, errors="ignore")
+
+    medians = x_train.median(numeric_only=True)
+
+    x_train = x_train.fillna(medians).fillna(0)
+    x_val = x_val.fillna(medians).fillna(0)
+    x_test = x_test.fillna(medians).fillna(0)
+
+    x_train, x_val, x_test = sanitize_feature_names(x_train, x_val, x_test)
+
+    return x_train, x_val, x_test
 
 
 def evaluate_regression(y_true: pd.Series, y_pred: np.ndarray) -> dict[str, float]:
@@ -92,29 +215,36 @@ def save_json(data: dict[str, Any], out_path: Path) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-# -----------------------------------------------------------------------------
-# Main training
-# -----------------------------------------------------------------------------
+def save_feature_importance(model, feature_names: list[str], out_path: Path) -> None:
+    importance = (
+        pd.DataFrame(
+            {
+                "feature": feature_names,
+                "importance": model.feature_importances_,
+            }
+        )
+        .sort_values("importance", ascending=False)
+        .head(30)
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    importance.to_csv(out_path, index=False)
+
+
 def run_xgboost_models(
-    splits_dir: str = "data/ml/splits_processed",
-    prefix: str = "dataset_completo",
-    mode: str = "operational",
-    outputs_dir: str = "outputs/ml",
+    dataset_dir: str = DEFAULT_DATASET_DIR,
+    outputs_dir: str = DEFAULT_OUTPUTS_DIR,
+    val_size: float = 0.15,
+    test_size: float = 0.15,
 ) -> dict[str, Any]:
-    if mode not in VALID_MODES:
-        raise ValueError(f"Modo no soportado: {mode}. Usa uno de {sorted(VALID_MODES)}")
+    print_stage("ML BOOSTING", "XGBoost regresión + clasificación | EX2 estrés urbano", color="magenta")
 
-    print_stage("ML BOOSTING", f"XGBoost regresión + clasificación | mode={mode}", color="magenta")
-
-    project_root = Path(__file__).resolve().parents[3]
-    outputs_base = (project_root / outputs_dir).resolve()
+    dataset_path = resolve_project_path(dataset_dir)
+    outputs_base = resolve_project_path(outputs_dir)
     outputs_base.mkdir(parents=True, exist_ok=True)
 
-    splits = load_processed_splits(
-        splits_dir=splits_dir,
-        prefix=prefix,
-        mode=mode,
-    )
+    raw_df = read_partitioned_parquet(dataset_path)
+    df = prepare_targets(raw_df)
+    splits = split_train_val_test(df, val_size=val_size, test_size=test_size)
 
     train_df = splits["train"]
     val_df = splits["val"]
@@ -124,23 +254,27 @@ def run_xgboost_models(
     x_val, y_val_reg, y_val_clf = split_xy(val_df)
     x_test, y_test_reg, y_test_clf = split_xy(test_df)
 
-    console.print(
-        f"[cyan]Splits cargados[/cyan] -> "
-        f"mode={mode} | train={len(train_df):,} | val={len(val_df):,} | test={len(test_df):,}"
-    )
-    console.print(f"[cyan]Features[/cyan] -> {x_train.shape[1]:,}")
+    x_train, x_val, x_test = preprocess_features(x_train, x_val, x_test)
 
-    # -------------------------------------------------------------------------
-    # REGRESIÓN
-    # -------------------------------------------------------------------------
+    console.print(
+        f"[cyan]Dataset cargado[/cyan] -> {dataset_path} | "
+        f"filas={len(df):,} | train={len(train_df):,} | val={len(val_df):,} | test={len(test_df):,}"
+    )
+    console.print(f"[cyan]Features finales[/cyan] -> {x_train.shape[1]:,}")
+    console.print(
+        f"[cyan]Clase positiva train[/cyan] -> "
+        f"{int((y_train_clf == 1).sum()):,}/{len(y_train_clf):,}"
+    )
+
     reg_model = XGBRegressor(
-        n_estimators=300,
+        n_estimators=400,
         max_depth=6,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
+        learning_rate=0.04,
+        subsample=0.85,
+        colsample_bytree=0.85,
         objective="reg:squarederror",
-        random_state=42,
+        tree_method="hist",
+        random_state=RANDOM_STATE,
         n_jobs=-1,
     )
 
@@ -157,23 +291,21 @@ def run_xgboost_models(
     reg_val_metrics = evaluate_regression(y_val_reg, val_pred_reg)
     reg_test_metrics = evaluate_regression(y_test_reg, test_pred_reg)
 
-    # -------------------------------------------------------------------------
-    # CLASIFICACIÓN
-    # -------------------------------------------------------------------------
     pos_count = int((y_train_clf == 1).sum())
     neg_count = int((y_train_clf == 0).sum())
     scale_pos_weight = (neg_count / pos_count) if pos_count > 0 else 1.0
 
     clf_model = XGBClassifier(
-        n_estimators=300,
+        n_estimators=400,
         max_depth=6,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
+        learning_rate=0.04,
+        subsample=0.85,
+        colsample_bytree=0.85,
         objective="binary:logistic",
         eval_metric="logloss",
         scale_pos_weight=scale_pos_weight,
-        random_state=42,
+        tree_method="hist",
+        random_state=RANDOM_STATE,
         n_jobs=-1,
     )
 
@@ -190,46 +322,35 @@ def run_xgboost_models(
     clf_val_metrics = evaluate_classification(y_val_clf, val_pred_clf)
     clf_test_metrics = evaluate_classification(y_test_clf, test_pred_clf)
 
-    # -------------------------------------------------------------------------
-    # Importancias
-    # -------------------------------------------------------------------------
-    reg_importance = (
-        pd.DataFrame(
-            {
-                "feature": x_train.columns,
-                "importance": reg_model.feature_importances_,
-            }
-        )
-        .sort_values("importance", ascending=False)
-        .head(20)
-    )
+    reg_model_fp = outputs_base / "xgboost_regressor_target_stress_t1.joblib"
+    clf_model_fp = outputs_base / "xgboost_classifier_target_is_stress_t1.joblib"
+    reg_importance_fp = outputs_base / "xgboost_regression_feature_importance.csv"
+    clf_importance_fp = outputs_base / "xgboost_classification_feature_importance.csv"
+    feature_cols_fp = outputs_base / "xgboost_feature_columns.json"
+    report_fp = outputs_base / "xgboost_report.json"
 
-    clf_importance = (
-        pd.DataFrame(
-            {
-                "feature": x_train.columns,
-                "importance": clf_model.feature_importances_,
-            }
-        )
-        .sort_values("importance", ascending=False)
-        .head(20)
-    )
+    joblib.dump(reg_model, reg_model_fp)
+    joblib.dump(clf_model, clf_model_fp)
 
-    reg_importance_fp = outputs_base / f"xgboost_regression_feature_importance_{prefix}_{mode}.csv"
-    clf_importance_fp = outputs_base / f"xgboost_classification_feature_importance_{prefix}_{mode}.csv"
+    save_feature_importance(reg_model, list(x_train.columns), reg_importance_fp)
+    save_feature_importance(clf_model, list(x_train.columns), clf_importance_fp)
+    save_json({"feature_columns": list(x_train.columns)}, feature_cols_fp)
 
-    reg_importance.to_csv(reg_importance_fp, index=False)
-    clf_importance.to_csv(clf_importance_fp, index=False)
-
-    # -------------------------------------------------------------------------
-    # Reporte
-    # -------------------------------------------------------------------------
     report = {
         "model": "xgboost",
-        "prefix": prefix,
-        "mode": mode,
-        "splits_dir": str((project_root / splits_dir).resolve()),
+        "task": "ej2_stress_urban",
+        "dataset_dir": str(dataset_path),
+        "target_regression": TARGET_REG,
+        "target_classification": TARGET_CLF,
+        "n_rows": int(len(df)),
         "n_features": int(x_train.shape[1]),
+        "splits": {
+            "train": int(len(train_df)),
+            "val": int(len(val_df)),
+            "test": int(len(test_df)),
+            "val_size": float(val_size),
+            "test_size": float(test_size),
+        },
         "regression": {
             "val": reg_val_metrics,
             "test": reg_test_metrics,
@@ -238,20 +359,21 @@ def run_xgboost_models(
             "val": clf_val_metrics,
             "test": clf_test_metrics,
             "scale_pos_weight": float(scale_pos_weight),
+            "positive_train": int(pos_count),
+            "negative_train": int(neg_count),
         },
         "artifacts": {
+            "regression_model": str(reg_model_fp),
+            "classification_model": str(clf_model_fp),
+            "feature_columns": str(feature_cols_fp),
             "regression_feature_importance_csv": str(reg_importance_fp),
             "classification_feature_importance_csv": str(clf_importance_fp),
         },
     }
 
-    report_fp = outputs_base / f"xgboost_report_{prefix}_{mode}.json"
     save_json(report, report_fp)
 
-    # -------------------------------------------------------------------------
-    # Mostrar resumen
-    # -------------------------------------------------------------------------
-    table = Table(title=f"XGBoost ({prefix} | {mode})", header_style="bold magenta")
+    table = Table(title="XGBoost EX2 - Estrés urbano", header_style="bold magenta")
     table.add_column("Bloque", style="bold white")
     table.add_column("Métrica")
     table.add_column("Valor", justify="right")
@@ -259,7 +381,6 @@ def run_xgboost_models(
     table.add_row("Regresión val", "MAE", f"{reg_val_metrics['mae']:.4f}")
     table.add_row("Regresión val", "RMSE", f"{reg_val_metrics['rmse']:.4f}")
     table.add_row("Regresión val", "R²", f"{reg_val_metrics['r2']:.4f}")
-
     table.add_row("Regresión test", "MAE", f"{reg_test_metrics['mae']:.4f}")
     table.add_row("Regresión test", "RMSE", f"{reg_test_metrics['rmse']:.4f}")
     table.add_row("Regresión test", "R²", f"{reg_test_metrics['r2']:.4f}")
@@ -268,7 +389,6 @@ def run_xgboost_models(
     table.add_row("Clasificación val", "Precision", f"{clf_val_metrics['precision']:.4f}")
     table.add_row("Clasificación val", "Recall", f"{clf_val_metrics['recall']:.4f}")
     table.add_row("Clasificación val", "F1", f"{clf_val_metrics['f1']:.4f}")
-
     table.add_row("Clasificación test", "Accuracy", f"{clf_test_metrics['accuracy']:.4f}")
     table.add_row("Clasificación test", "Precision", f"{clf_test_metrics['precision']:.4f}")
     table.add_row("Clasificación test", "Recall", f"{clf_test_metrics['recall']:.4f}")
@@ -276,53 +396,55 @@ def run_xgboost_models(
 
     console.print(table)
     console.print(f"[green]Reporte guardado[/green] -> {report_fp}")
+    console.print(f"[green]Modelo regresión[/green] -> {reg_model_fp}")
+    console.print(f"[green]Modelo clasificación[/green] -> {clf_model_fp}")
     console.print(f"[green]Importancias regresión[/green] -> {reg_importance_fp}")
     console.print(f"[green]Importancias clasificación[/green] -> {clf_importance_fp}")
 
-    print_done(f"XGBOOST COMPLETADO ({mode})")
+    print_done("XGBOOST EX2 COMPLETADO")
     return report
 
+def sanitize_feature_names(*dfs: pd.DataFrame) -> tuple[pd.DataFrame, ...]:
+    cleaned = []
+
+    for df in dfs:
+        out = df.copy()
+        out.columns = (
+            out.columns.astype(str)
+            .str.replace("[", "(", regex=False)
+            .str.replace("]", ")", regex=False)
+            .str.replace("<", "_lt_", regex=False)
+            .str.replace(">", "_gt_", regex=False)
+        )
+        cleaned.append(out)
+
+    return tuple(cleaned)
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Entrena XGBoost sobre splits procesados.")
-
-    p.add_argument(
-        "--splits-dir",
-        default="data/ml/splits_processed",
-        help="Directorio de splits procesados.",
+    parser = argparse.ArgumentParser(
+        description="Entrena XGBoost para EX2 sobre el dataset actual de estrés urbano."
     )
-    p.add_argument(
-        "--prefix",
-        default="completo",
-        help="Prefijo de los splits.",
+    parser.add_argument(
+        "--dataset-dir",
+        default=DEFAULT_DATASET_DIR,
+        help="Dataset particionado de EX2.",
     )
-    p.add_argument(
-        "--mode",
-        choices=["operational", "predictive", "both"],
-        default="both",
-        help="Modo de ejecución: operational, predictive o both (default).",
-    )
-    p.add_argument(
+    parser.add_argument(
         "--outputs-dir",
-        default="outputs/ml",
-        help="Directorio de salida para reportes e importancias.",
+        default=DEFAULT_OUTPUTS_DIR,
+        help="Directorio de salida para modelos, reportes e importancias.",
     )
+    parser.add_argument("--val-size", type=float, default=0.15)
+    parser.add_argument("--test-size", type=float, default=0.15)
 
-    args = p.parse_args()
+    args = parser.parse_args()
 
-    modes = (
-        ["operational", "predictive"]
-        if args.mode == "both"
-        else [args.mode]
+    run_xgboost_models(
+        dataset_dir=args.dataset_dir,
+        outputs_dir=args.outputs_dir,
+        val_size=args.val_size,
+        test_size=args.test_size,
     )
-
-    for mode in modes:
-        run_xgboost_models(
-            splits_dir=args.splits_dir,
-            prefix=args.prefix,
-            mode=mode,
-            outputs_dir=args.outputs_dir,
-        )
 
 
 if __name__ == "__main__":
