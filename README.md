@@ -300,7 +300,9 @@ Este proyecto fue desarrollado por los siguientes estudiantes del Grado en Ingen
 - [Entrega 1: Distribución del Trabajo](https://docs.google.com/document/d/1K5g5cqhqr7BZ0P4KehW0uqv_OZGyN_cjHm6tFBikYTY/edit?usp=sharing)
 
 **Entrega 2**
-- [Memoria Entrega 2](https://docs.google.com/document/d/12uWMO4wAyDforRW51FLFtRzltHT_LC2Gat92gY-dCvg/edit?tab=t.0)
+- [Presentación Entrega 2]()
+- [Memoria Entrega 2](https://docs.google.com/document/d/1BeDUwpIIZ76oQSTDzrjcvYsROVYALI4uF1sLKIetDtw/edit?usp=sharing)
+- [Entrega 2: Distribución del Trabajo](https://docs.google.com/document/d/19Q7bwqnLdEIqhRjMFr6UOWoBgs1nh_71DfUrqB43VlE/edit?usp=sharing)
 
 # Visualizaciones
 - [Google drive](https://drive.google.com/drive/folders/1gWM-5GU0OTZgczfwt1Mxz7wQFQUuLo5Z?usp=drive_link)
