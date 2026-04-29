@@ -43,12 +43,48 @@ def infer_feature_columns(
     *,
     label_col: str,
 ) -> tuple[list[str], list[str]]:
-    # Blindaje anti-leakage: nunca usar targets como features aunque estén presentes en el DF.
-    cols = [c for c in df.columns if c != label_col and not c.startswith("target_")]
-    cat_cols = [c for c, t in df.dtypes if c in cols and t == "string"]
-    num_cols = [c for c in cols if c not in cat_cols]
-    return num_cols, cat_cols
+    # Blindaje anti-leakage y anti-columnas problemáticas.
+    excluded_cols = {
+        label_col,
+        "date",
+        "datetime",
+        "timestamp",
+        "timestamp_hour",
+        "pickup_datetime",
+        "dropoff_datetime",
+    }
 
+    cols = [
+        c
+        for c in df.columns
+        if c not in excluded_cols
+        and not c.startswith("target_")
+    ]
+
+    cat_cols = [
+        c
+        for c, t in df.dtypes
+        if c in cols and t in {"string", "boolean"}
+    ]
+
+    numeric_types = {
+        "int",
+        "bigint",
+        "double",
+        "float",
+        "long",
+        "short",
+        "decimal",
+        "tinyint",
+    }
+
+    num_cols = [
+        c
+        for c, t in df.dtypes
+        if c in cols and any(t.startswith(nt) for nt in numeric_types)
+    ]
+
+    return num_cols, cat_cols
 
 def materialize_on_disk(df: DataFrame) -> DataFrame:
     cached = df.persist(StorageLevel.DISK_ONLY)

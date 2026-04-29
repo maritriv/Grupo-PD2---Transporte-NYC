@@ -129,11 +129,11 @@ def split_model_stress_spark(
         test_df = out.filter(F.col(time_col) >= F.lit(test_start_ts))
 
     # 4) Validar que no haya bloques vacios, igual que en pandas
-    if train_df.rdd.isEmpty():
+    if train_df.limit(1).count() == 0:
         raise ValueError("El bloque train quedo vacio.")
-    if test_df.rdd.isEmpty():
+    if test_df.limit(1).count() == 0:
         raise ValueError("El bloque test quedo vacio.")
-    if has_val and val_df.rdd.isEmpty():
+    if has_val and val_df.limit(1).count() == 0:
         raise ValueError("El bloque val quedo vacio.")
 
     # 5) Preparar salida: primero crear label y luego dropear columnas

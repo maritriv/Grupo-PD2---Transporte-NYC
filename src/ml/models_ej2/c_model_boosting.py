@@ -22,8 +22,8 @@ from xgboost import XGBClassifier, XGBRegressor
 
 from config.pipeline_runner import console, print_done, print_stage
 
-TARGET_REG = "target_stress_t1"
-TARGET_CLF = "target_is_stress_t1"
+DEFAULT_TARGET_REG = "target_stress_t24"
+DEFAULT_TARGET_CLF = "target_is_stress_t24"
 
 DEFAULT_DATASET_DIR = "data/aggregated/ex_stress/df_stress_zone_hour_day"
 DEFAULT_OUTPUTS_DIR = "outputs/ml/ej2/boosting"
@@ -102,18 +102,22 @@ def add_time_sort_column(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def prepare_targets(df: pd.DataFrame) -> pd.DataFrame:
-    if TARGET_REG not in df.columns:
-        raise ValueError(f"Falta target de regresión: {TARGET_REG}")
-    if TARGET_CLF not in df.columns:
-        raise ValueError(f"Falta target de clasificación: {TARGET_CLF}")
+def prepare_targets(
+    df: pd.DataFrame,
+    target_reg: str,
+    target_clf: str,
+) -> pd.DataFrame:
+    if target_reg not in df.columns:
+        raise ValueError(f"Falta target de regresión: {target_reg}")
+    if target_clf not in df.columns:
+        raise ValueError(f"Falta target de clasificación: {target_clf}")
 
     out = df.copy()
-    out[TARGET_REG] = pd.to_numeric(out[TARGET_REG], errors="coerce")
-    out[TARGET_CLF] = pd.to_numeric(out[TARGET_CLF], errors="coerce")
+    out[target_reg] = pd.to_numeric(out[target_reg], errors="coerce")
+    out[target_clf] = pd.to_numeric(out[target_clf], errors="coerce")
 
-    out = out.dropna(subset=[TARGET_REG, TARGET_CLF])
-    out[TARGET_CLF] = out[TARGET_CLF].astype(int)
+    out = out.dropna(subset=[target_reg, target_clf])
+    out[target_clf] = out[target_clf].astype(int)
 
     return out.reset_index(drop=True)
 
@@ -140,9 +144,13 @@ def split_train_val_test(
     return {"train": train, "val": val, "test": test}
 
 
-def split_xy(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
-    y_reg = df[TARGET_REG].copy()
-    y_clf = df[TARGET_CLF].copy().astype(int)
+def split_xy(
+    df: pd.DataFrame,
+    target_reg: str,
+    target_clf: str,
+) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
+    y_reg = df[target_reg].copy()
+    y_clf = df[target_clf].copy().astype(int)
 
     drop_cols = set(TARGET_COLS) | set(DROP_FEATURE_COLS) | {"_sort_time"}
     x = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore").copy()
@@ -150,12 +158,28 @@ def split_xy(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     return x, y_reg, y_clf
 
 
+def sanitize_feature_names(*dfs: pd.DataFrame) -> tuple[pd.DataFrame, ...]:
+    cleaned = []
+
+    for df in dfs:
+        out = df.copy()
+        out.columns = (
+            out.columns.astype(str)
+            .str.replace("[", "(", regex=False)
+            .str.replace("]", ")", regex=False)
+            .str.replace("<", "_lt_", regex=False)
+            .str.replace(">", "_gt_", regex=False)
+        )
+        cleaned.append(out)
+
+    return tuple(cleaned)
+
+
 def preprocess_features(
     x_train: pd.DataFrame,
     x_val: pd.DataFrame,
     x_test: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    # Convertir booleanos a enteros.
     for df in [x_train, x_val, x_test]:
         bool_cols = df.select_dtypes(include=["bool"]).columns
         for col in bool_cols:
@@ -174,7 +198,6 @@ def preprocess_features(
         for col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Quitamos columnas completamente nulas en train.
     all_null_cols = [c for c in x_train.columns if x_train[c].isna().all()]
     if all_null_cols:
         x_train = x_train.drop(columns=all_null_cols)
@@ -233,26 +256,32 @@ def save_feature_importance(model, feature_names: list[str], out_path: Path) -> 
 def run_xgboost_models(
     dataset_dir: str = DEFAULT_DATASET_DIR,
     outputs_dir: str = DEFAULT_OUTPUTS_DIR,
+    target_reg: str = DEFAULT_TARGET_REG,
+    target_clf: str = DEFAULT_TARGET_CLF,
     val_size: float = 0.15,
     test_size: float = 0.15,
 ) -> dict[str, Any]:
-    print_stage("ML BOOSTING", "XGBoost regresión + clasificación | EX2 estrés urbano", color="magenta")
+    print_stage(
+        "ML BOOSTING",
+        f"XGBoost regresión + clasificación | EX2 estrés urbano | target={target_reg}",
+        color="magenta",
+    )
 
     dataset_path = resolve_project_path(dataset_dir)
     outputs_base = resolve_project_path(outputs_dir)
     outputs_base.mkdir(parents=True, exist_ok=True)
 
     raw_df = read_partitioned_parquet(dataset_path)
-    df = prepare_targets(raw_df)
+    df = prepare_targets(raw_df, target_reg=target_reg, target_clf=target_clf)
     splits = split_train_val_test(df, val_size=val_size, test_size=test_size)
 
     train_df = splits["train"]
     val_df = splits["val"]
     test_df = splits["test"]
 
-    x_train, y_train_reg, y_train_clf = split_xy(train_df)
-    x_val, y_val_reg, y_val_clf = split_xy(val_df)
-    x_test, y_test_reg, y_test_clf = split_xy(test_df)
+    x_train, y_train_reg, y_train_clf = split_xy(train_df, target_reg, target_clf)
+    x_val, y_val_reg, y_val_clf = split_xy(val_df, target_reg, target_clf)
+    x_test, y_test_reg, y_test_clf = split_xy(test_df, target_reg, target_clf)
 
     x_train, x_val, x_test = preprocess_features(x_train, x_val, x_test)
 
@@ -260,6 +289,8 @@ def run_xgboost_models(
         f"[cyan]Dataset cargado[/cyan] -> {dataset_path} | "
         f"filas={len(df):,} | train={len(train_df):,} | val={len(val_df):,} | test={len(test_df):,}"
     )
+    console.print(f"[cyan]Target regresión[/cyan] -> {target_reg}")
+    console.print(f"[cyan]Target clasificación[/cyan] -> {target_clf}")
     console.print(f"[cyan]Features finales[/cyan] -> {x_train.shape[1]:,}")
     console.print(
         f"[cyan]Clase positiva train[/cyan] -> "
@@ -322,8 +353,8 @@ def run_xgboost_models(
     clf_val_metrics = evaluate_classification(y_val_clf, val_pred_clf)
     clf_test_metrics = evaluate_classification(y_test_clf, test_pred_clf)
 
-    reg_model_fp = outputs_base / "xgboost_regressor_target_stress_t1.joblib"
-    clf_model_fp = outputs_base / "xgboost_classifier_target_is_stress_t1.joblib"
+    reg_model_fp = outputs_base / f"xgboost_regressor_{target_reg}.joblib"
+    clf_model_fp = outputs_base / f"xgboost_classifier_{target_clf}.joblib"
     reg_importance_fp = outputs_base / "xgboost_regression_feature_importance.csv"
     clf_importance_fp = outputs_base / "xgboost_classification_feature_importance.csv"
     feature_cols_fp = outputs_base / "xgboost_feature_columns.json"
@@ -340,8 +371,14 @@ def run_xgboost_models(
         "model": "xgboost",
         "task": "ej2_stress_urban",
         "dataset_dir": str(dataset_path),
-        "target_regression": TARGET_REG,
-        "target_classification": TARGET_CLF,
+        "target": target_reg,
+        "target_regression": target_reg,
+        "target_classification": target_clf,
+        "rmse_test": reg_test_metrics["rmse"],
+        "mae_test": reg_test_metrics["mae"],
+        "r2_test": reg_test_metrics["r2"],
+        "accuracy_test": clf_test_metrics["accuracy"],
+        "f1_test": clf_test_metrics["f1"],
         "n_rows": int(len(df)),
         "n_features": int(x_train.shape[1]),
         "splits": {
@@ -404,21 +441,6 @@ def run_xgboost_models(
     print_done("XGBOOST EX2 COMPLETADO")
     return report
 
-def sanitize_feature_names(*dfs: pd.DataFrame) -> tuple[pd.DataFrame, ...]:
-    cleaned = []
-
-    for df in dfs:
-        out = df.copy()
-        out.columns = (
-            out.columns.astype(str)
-            .str.replace("[", "(", regex=False)
-            .str.replace("]", ")", regex=False)
-            .str.replace("<", "_lt_", regex=False)
-            .str.replace(">", "_gt_", regex=False)
-        )
-        cleaned.append(out)
-
-    return tuple(cleaned)
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -434,6 +456,16 @@ def main() -> None:
         default=DEFAULT_OUTPUTS_DIR,
         help="Directorio de salida para modelos, reportes e importancias.",
     )
+    parser.add_argument(
+        "--target-reg",
+        default=DEFAULT_TARGET_REG,
+        help="Columna target de regresión.",
+    )
+    parser.add_argument(
+        "--target-clf",
+        default=DEFAULT_TARGET_CLF,
+        help="Columna target de clasificación.",
+    )
     parser.add_argument("--val-size", type=float, default=0.15)
     parser.add_argument("--test-size", type=float, default=0.15)
 
@@ -442,6 +474,8 @@ def main() -> None:
     run_xgboost_models(
         dataset_dir=args.dataset_dir,
         outputs_dir=args.outputs_dir,
+        target_reg=args.target_reg,
+        target_clf=args.target_clf,
         val_size=args.val_size,
         test_size=args.test_size,
     )

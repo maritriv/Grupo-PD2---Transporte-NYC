@@ -179,6 +179,40 @@ Aplicar cambios:
 source ~/.zshrc
 ```
 
+**2.3**. Configurar Hadoop (obligatorio en Windows)
+
+Spark en Windows necesita `winutils.exe` y `hadoop.dll`.
+
+Crea la estructura: `C:\hadoop\bin\`
+
+Para descargar los archivos necesarios puedes obtenerlos desde repositorios compatibles con tu versión de Hadoop/Spark (por ejemplo Hadoop 3.x).
+
+[Repositorio recomendado](https://github.com/cdarlint/winutils)
+
+Este repositorio incluye tanto el archivo `winutils.exe`como el archivo `hadoop.dll`
+
+Una vez descargados, copia ambos archivos dentro de: `C:\hadoop\bin\`
+
+**2.4** Configurar variables de Hadoop
+
+Ejecuta:
+```bash
+$env:HADOOP_HOME="C:\hadoop"
+$env:PATH="C:\hadoop\bin;$env:PATH"
+```
+
+Verifica la instalación con:
+```bash
+Get-Command winutils.exe
+Get-Command hadoop.dll
+```
+
+Debe devolver:
+```bash
+C:\hadoop\bin\winutils.exe
+C:\hadoop\bin\hadoop.dll
+```
+
 ----
 **3. Descargar los datos**
 

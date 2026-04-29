@@ -8,6 +8,7 @@ from pyspark.ml import Pipeline
 from pyspark.ml.feature import OneHotEncoder, StringIndexer, VectorAssembler
 from pyspark.ml.regression import GBTRegressor
 from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
 
 from config.pipeline_runner import console, print_done, print_stage
 from config.spark_manager import SparkManager
@@ -202,8 +203,8 @@ def _feature_importance(model, transformed_df: DataFrame, feature_cols: list[str
 
 def run_gbt_stress(
     input_dir: str = "data/aggregated/ex_stress/df_stress_zone_hour_day",
-    outputs_dir: str = "outputs/ejercicio2/gbt",
-    target_col: str = "target_stress_t1",
+    outputs_dir: str = "outputs/ejercicio2/reports/gbt",
+    target_col: str = "target_stress_t24",
     time_col: str = "timestamp_hour",
     train_frac: float = 0.70,
     val_frac: float = 0.15,
@@ -282,6 +283,30 @@ def run_gbt_stress(
 
         # Preparar columnas
         num_cols, cat_cols = infer_feature_columns(train_df, label_col="label")
+
+        for c in num_cols:
+            train_df = train_df.withColumn(
+                c,
+                F.when(
+                    F.isnan(F.col(c)) | F.col(c).isNull() | F.col(c).isin(float("inf"), float("-inf")),
+                    F.lit(0.0),
+                ).otherwise(F.col(c)),
+            )
+            val_df = val_df.withColumn(
+                c,
+                F.when(
+                    F.isnan(F.col(c)) | F.col(c).isNull() | F.col(c).isin(float("inf"), float("-inf")),
+                    F.lit(0.0),
+                ).otherwise(F.col(c)),
+            )
+            test_df = test_df.withColumn(
+                c,
+                F.when(
+                    F.isnan(F.col(c)) | F.col(c).isNull() | F.col(c).isin(float("inf"), float("-inf")),
+                    F.lit(0.0),
+                ).otherwise(F.col(c)),
+            )
+
         if cat_cols:
             cat_encoding = "OneHotEncoder" if one_hot_encode_cats else "StringIndexer (sin one-hot)"
             console.print(
@@ -666,12 +691,12 @@ def main() -> None:
     )
     p.add_argument(
         "--outputs-dir",
-        default="outputs/ejercicio2/gbt",
+        default="outputs/ejercicio2/reports/gbt",
         help="Directorio de salida para modelo, metricas e importancias.",
     )
     p.add_argument(
         "--target-col",
-        default="target_stress_t1",
+        default="target_stress_t24",
         choices=["target_stress_t1", "target_stress_t3", "target_stress_t24"],
         help="Target a predecir. Correr 3 veces con distintos valores para comparar.",
     )

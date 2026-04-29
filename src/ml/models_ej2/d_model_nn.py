@@ -151,8 +151,10 @@ class TorchRegressorWrapper:
         return DataLoader(ds, batch_size=batch_size, shuffle=shuffle, drop_last=False)
 
     @staticmethod
-    def _loss(pred_log1p: torch.Tensor, y_log1p: torch.Tensor) -> torch.Tensor:
-        return nn.functional.smooth_l1_loss(pred_log1p, y_log1p)
+    def _loss(pred: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        # Entrenamos directamente en la escala del stress.
+        # Evita NaN cuando el target tiene valores <= -1, que rompen torch.log1p().
+        return nn.functional.smooth_l1_loss(pred, y)
 
     @torch.no_grad()
     def predict(self, data: NNPreparedData) -> np.ndarray:
@@ -163,8 +165,7 @@ class TorchRegressorWrapper:
             x_num = x_num.to(self.device)
             x_cat = x_cat.to(self.device)
             out = self.model(x_num, x_cat)
-            pred = torch.expm1(out).clamp(min=0.0)
-            preds.append(pred.cpu().numpy().reshape(-1))
+            preds.append(out.cpu().numpy().reshape(-1))
         return np.concatenate(preds) if preds else np.empty(0, dtype=float)
 
     @torch.no_grad()
@@ -175,9 +176,9 @@ class TorchRegressorWrapper:
         for x_num, x_cat, y in loader:
             x_num = x_num.to(self.device)
             x_cat = x_cat.to(self.device)
-            y_log1p = torch.log1p(y.to(self.device))
+            y = y.to(self.device)
             out = self.model(x_num, x_cat)
-            losses.append(float(self._loss(out, y_log1p).detach().cpu()))
+            losses.append(float(self._loss(out, y).detach().cpu()))
         return float(np.mean(losses)) if losses else float("nan")
 
     def fit(self, train: NNPreparedData, val: NNPreparedData | None = None) -> None:
@@ -198,11 +199,11 @@ class TorchRegressorWrapper:
             for x_num, x_cat, y in train_loader:
                 x_num = x_num.to(self.device)
                 x_cat = x_cat.to(self.device)
-                y_log1p = torch.log1p(y.to(self.device))
+                y = y.to(self.device)
 
                 optimizer.zero_grad(set_to_none=True)
                 out = self.model(x_num, x_cat)
-                loss = self._loss(out, y_log1p)
+                loss = self._loss(out, y)
                 loss.backward()
                 if self.grad_clip_norm > 0:
                     nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.grad_clip_norm)
@@ -314,7 +315,8 @@ def _prepare_nn_data(
 ) -> NNPreparedData:
     x_num = _apply_numeric_stats(df, num_cols, num_stats)
     x_cat = _apply_category_maps(df, cat_cols, cat_maps)
-    y = pd.to_numeric(df[target_col], errors="coerce").fillna(0.0).to_numpy(dtype=np.float32)
+    y = pd.to_numeric(df[target_col], errors="coerce").to_numpy(dtype=np.float32)
+    y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
     return NNPreparedData(x_num=x_num, x_cat=x_cat, y=y)
 
 
@@ -486,8 +488,8 @@ def _permutation_importance(
 # -----------------------------------------------------------------------------
 def run_neural_network_stress(
     input_dir: str = "data/aggregated/ex_stress/df_stress_zone_hour_day",
-    outputs_dir: str = "outputs/ejercicio2/neural_network",
-    target_col: str = "target_stress_t1",
+    outputs_dir: str = "outputs/ejercicio2/reports/neural_network",
+    target_col: str = "target_stress_t24",
     time_col: str = "timestamp_hour",
     train_frac: float = 0.70,
     val_frac: float = 0.15,
@@ -942,8 +944,13 @@ def run_neural_network_stress(
 
         report = {
             "model": "EmbeddingMLPRegressor_torch",
+            "target": target_col,
+            "rmse_test": metrics_test["rmse"],
+            "mae_test": metrics_test["mae"],
+            "r2_test": metrics_test["r2"],
+            "accuracy_test": None,
+            "f1_test": None,
             "input_dir": str(input_path),
-            "target_col": target_col,
             "time_col": time_col,
             "extra_drop_cols": extra_drop_cols,
             "split_params": {
@@ -1018,10 +1025,10 @@ def main() -> None:
     )
     p.add_argument(
         "--outputs-dir",
-        default="outputs/ejercicio2/neural_network",
+        default="outputs/ejercicio2/reports/neural_network",
         help="Directorio de salida para modelo, metricas e importancias.",
     )
-    p.add_argument("--target-col", default="target_stress_t1")
+    p.add_argument("--target-col", default="target_stress_t24")
     p.add_argument("--time-col", default="timestamp_hour")
     p.add_argument("--train-frac", type=float, default=0.70)
     p.add_argument("--val-frac", type=float, default=0.15)

@@ -14,7 +14,7 @@ from src.ml.models_ej2.common.io import ensure_project_dir, resolve_project_path
 DEFAULT_DATASET_DIR = "data/aggregated/ex_stress/df_stress_zone_hour_day"
 DEFAULT_OUTPUTS_DIR = "outputs/ml/ej2/baseline"
 
-DEFAULT_TARGET_REG = "target_stress_t1"
+DEFAULT_TARGET_REG = "target_stress_t24"
 DEFAULT_TIME_COL = "timestamp_hour"
 DEFAULT_TRAIN_FRAC = 0.70
 DEFAULT_VAL_FRAC = 0.15
