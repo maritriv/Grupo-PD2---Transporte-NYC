@@ -71,8 +71,8 @@ class EmbeddingMLPRegressor(nn.Module):
         num_numeric: int,
         cat_cardinalities: list[int],
         embedding_dim_cap: int = 32,
-        hidden_dims: tuple[int, ...] = (256, 128, 64),
-        dropout: float = 0.20,
+        hidden_dims: tuple[int, ...] = (64, 32),
+        dropout: float = 0.15,
         use_batch_norm: bool = True,
     ):
         super().__init__()
@@ -333,14 +333,14 @@ def _resolve_nn_training_params(
     nn_embedding_dim_cap: int | None,
 ) -> dict[str, Any]:
     defaults = {
-        "nn_hidden_dims": "256,128,64",
-        "nn_dropout": 0.20,
+        "nn_hidden_dims": "64,32",
+        "nn_dropout": 0.15,
         "nn_learning_rate": 1e-3,
         "nn_weight_decay": 1e-5,
-        "nn_batch_size": 1024,
-        "nn_max_epochs": 80,
-        "nn_patience": 12,
-        "nn_embedding_dim_cap": 32,
+        "nn_batch_size": 2048,
+        "nn_max_epochs": 30,
+        "nn_patience": 5,
+        "nn_embedding_dim_cap": 12,
     }
     return {
         "nn_hidden_dims": defaults["nn_hidden_dims"] if nn_hidden_dims is None else nn_hidden_dims,
@@ -413,7 +413,7 @@ def _build_wrapper(
         embedding_dim_cap=nn_embedding_dim_cap,
         hidden_dims=_parse_hidden_dims(nn_hidden_dims),
         dropout=nn_dropout,
-        use_batch_norm=True,
+        use_batch_norm=False,
     )
     device = "cuda" if torch.cuda.is_available() else "cpu"
     return TorchRegressorWrapper(
@@ -513,8 +513,9 @@ def run_neural_network_stress(
     tune_batch_size_values: list[int] | None = None,
     tune_embedding_cap_values: list[int] | None = None,
     include_train_metrics: bool = True,
-    refit_train_val: bool = True,
+    refit_train_val: bool = False,
     fit_all_data: bool = False,
+    compute_importance: bool = False,
     seed: int = 42,
     verbose_epochs: bool = False,
 ) -> dict[str, Any]:
@@ -572,7 +573,15 @@ def run_neural_network_stress(
         else:
             console.print("[cyan]Columnas categóricas detectadas[/cyan]: 0")
 
-        select_cols = [*num_cols, *cat_cols, target_col, time_col]
+        # El split ya elimina columnas auxiliares como timestamp_hour de X.
+        # Por eso NO forzamos time_col aquí: si no existe tras el split, Spark falla
+        # con UNRESOLVED_COLUMN. Para entrenar Torch solo hacen falta features + target.
+        available_train_cols = set(train_df.columns)
+        select_cols = [c for c in [*num_cols, *cat_cols, target_col] if c in available_train_cols]
+        missing_required = [c for c in [target_col] if c not in select_cols]
+        if missing_required:
+            raise ValueError(f"Faltan columnas requeridas tras el split: {missing_required}")
+
         pdf_train = _collect_spark_to_pandas(train_df, select_cols)
         pdf_val = _collect_spark_to_pandas(val_df, select_cols)
         pdf_test = _collect_spark_to_pandas(test_df, select_cols)
@@ -911,20 +920,22 @@ def run_neural_network_stress(
             model_fp,
         )
 
-        importance_df = _permutation_importance(
-            final_wrapper,
-            pdf_importance_ref,
-            prepared_importance_ref,
-            num_cols=num_cols,
-            cat_cols=cat_cols,
-            target_col=target_col,
-            num_stats=num_stats,
-            cat_maps=cat_maps,
-            max_features=40,
-            random_state=seed,
-        )
-        importance_fp = outputs_path / "neural_network_stress_feature_importance.csv"
-        importance_df.to_csv(importance_fp, index=False)
+        importance_fp = None
+        if compute_importance:
+            importance_df = _permutation_importance(
+                final_wrapper,
+                pdf_importance_ref,
+                prepared_importance_ref,
+                num_cols=num_cols,
+                cat_cols=cat_cols,
+                target_col=target_col,
+                num_stats=num_stats,
+                cat_maps=cat_maps,
+                max_features=25,
+                random_state=seed,
+            )
+            importance_fp = outputs_path / "neural_network_stress_feature_importance.csv"
+            importance_df.to_csv(importance_fp, index=False)
 
         history_fp = outputs_path / "neural_network_training_history.csv"
         pd.DataFrame(final_wrapper.training_history).to_csv(history_fp, index=False)
@@ -974,7 +985,7 @@ def run_neural_network_stress(
             "artifacts": {
                 "model_pt": str(model_fp),
                 "all_data_model_pt": None if model_all_fp is None else str(model_all_fp),
-                "feature_importance_csv": str(importance_fp),
+                "feature_importance_csv": None if importance_fp is None else str(importance_fp),
                 "training_history_csv": str(history_fp),
             },
         }
@@ -984,7 +995,8 @@ def run_neural_network_stress(
         console.print(f"[green]Modelo guardado[/green] -> {model_fp}")
         if model_all_fp is not None:
             console.print(f"[green]Modelo all-data guardado[/green] -> {model_all_fp}")
-        console.print(f"[green]Importancias guardadas[/green] -> {importance_fp}")
+        if importance_fp is not None:
+            console.print(f"[green]Importancias guardadas[/green] -> {importance_fp}")
         console.print(f"[green]Historial guardado[/green] -> {history_fp}")
         console.print(f"[green]Reporte guardado[/green] -> {report_fp}")
 
@@ -1020,7 +1032,7 @@ def main() -> None:
         help="Columna extra a eliminar de X. Repetible. Se anade a las columnas base del split.",
     )
     p.add_argument("--shuffle-partitions", type=int, default=200)
-    p.add_argument("--nn-hidden-dims", default=None, help="Capas ocultas CSV, ej: 256,128,64")
+    p.add_argument("--nn-hidden-dims", default=None, help="Capas ocultas CSV, ej: 64,32")
     p.add_argument("--nn-dropout", type=float, default=None)
     p.add_argument("--nn-learning-rate", type=float, default=None)
     p.add_argument("--nn-weight-decay", type=float, default=None)
@@ -1042,8 +1054,9 @@ def main() -> None:
     p.add_argument("--tune-batch-size-values", default=None, help="Lista CSV de batch size")
     p.add_argument("--tune-embedding-cap-values", default=None, help="Lista CSV de embedding dim cap")
     p.add_argument("--skip-train-metrics", action="store_true")
-    p.add_argument("--no-refit-train-val", action="store_true")
+    p.add_argument("--refit-train-val", action="store_true", help="Opcional: reentrena con train+val antes de evaluar test. Más pesado.")
     p.add_argument("--fit-all-data", action="store_true")
+    p.add_argument("--compute-importance", action="store_true", help="Calcula importancias por permutacion. Es lento; desactivado por defecto.")
 
     args = p.parse_args()
     tune_dropout_values = parse_csv_values(args.tune_dropout_values, float)
@@ -1084,8 +1097,9 @@ def main() -> None:
         tune_batch_size_values=tune_batch_size_values,
         tune_embedding_cap_values=tune_embedding_cap_values,
         include_train_metrics=not args.skip_train_metrics,
-        refit_train_val=not args.no_refit_train_val,
+        refit_train_val=args.refit_train_val,
         fit_all_data=args.fit_all_data,
+        compute_importance=args.compute_importance,
         seed=args.seed,
         verbose_epochs=args.verbose_epochs,
     )
