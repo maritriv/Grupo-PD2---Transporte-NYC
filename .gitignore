@@ -26,6 +26,8 @@ pruebas.py
 !frontend/public/macbrides.png
 !docs/ejercicios/ex1c/analisis_demanda_files/*.png
 !docs/ejercicios/ex1b/modelo_propinas_files/*.png
+!docs/ejercicios/ex2/random_forest_regressor_files/*.png
+!docs/ejercicios/ex2/gbt_regressor_files/*.png
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
