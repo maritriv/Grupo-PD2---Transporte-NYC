@@ -85,7 +85,8 @@ def add_time_sort_column(df: pd.DataFrame) -> pd.DataFrame:
         out["_sort_time"] = pd.to_datetime(out["timestamp"], errors="coerce")
     elif "date" in out.columns and "hour" in out.columns:
         out["_sort_time"] = pd.to_datetime(out["date"], errors="coerce") + pd.to_timedelta(
-            pd.to_numeric(out["hour"], errors="coerce").fillna(0), unit="h"
+            pd.to_numeric(out["hour"], errors="coerce").fillna(0),
+            unit="h",
         )
     elif {"year", "month", "day", "hour"}.issubset(out.columns):
         out["_sort_time"] = pd.to_datetime(
@@ -260,6 +261,7 @@ def run_xgboost_models(
     target_clf: str = DEFAULT_TARGET_CLF,
     val_size: float = 0.15,
     test_size: float = 0.15,
+    fit_all_data: bool = False,
 ) -> dict[str, Any]:
     print_stage(
         "ML BOOSTING",
@@ -353,6 +355,23 @@ def run_xgboost_models(
     clf_val_metrics = evaluate_classification(y_val_clf, val_pred_clf)
     clf_test_metrics = evaluate_classification(y_test_clf, test_pred_clf)
 
+    final_training_data = "train"
+
+    if fit_all_data:
+        console.print(
+            "[cyan]Reentrenando XGBoost final con train+val+test[/cyan] "
+            "(modelo para despliegue)"
+        )
+
+        x_all = pd.concat([x_train, x_val, x_test], ignore_index=True)
+        y_reg_all = pd.concat([y_train_reg, y_val_reg, y_test_reg], ignore_index=True)
+        y_clf_all = pd.concat([y_train_clf, y_val_clf, y_test_clf], ignore_index=True)
+
+        reg_model.fit(x_all, y_reg_all, verbose=False)
+        clf_model.fit(x_all, y_clf_all, verbose=False)
+
+        final_training_data = "train_val_test"
+
     reg_model_fp = outputs_base / f"xgboost_regressor_{target_reg}.joblib"
     clf_model_fp = outputs_base / f"xgboost_classifier_{target_clf}.joblib"
     reg_importance_fp = outputs_base / "xgboost_regression_feature_importance.csv"
@@ -374,6 +393,8 @@ def run_xgboost_models(
         "target": target_reg,
         "target_regression": target_reg,
         "target_classification": target_clf,
+        "fit_all_data": bool(fit_all_data),
+        "final_training_data": final_training_data,
         "rmse_test": reg_test_metrics["rmse"],
         "mae_test": reg_test_metrics["mae"],
         "r2_test": reg_test_metrics["r2"],
@@ -438,6 +459,9 @@ def run_xgboost_models(
     console.print(f"[green]Importancias regresión[/green] -> {reg_importance_fp}")
     console.print(f"[green]Importancias clasificación[/green] -> {clf_importance_fp}")
 
+    if fit_all_data:
+        console.print("[green]Modelo final reentrenado con train+val+test[/green]")
+
     print_done("XGBOOST EX2 COMPLETADO")
     return report
 
@@ -468,6 +492,11 @@ def main() -> None:
     )
     parser.add_argument("--val-size", type=float, default=0.15)
     parser.add_argument("--test-size", type=float, default=0.15)
+    parser.add_argument(
+        "--fit-all-data",
+        action="store_true",
+        help="Reentrena el modelo final con train+val+test para despliegue.",
+    )
 
     args = parser.parse_args()
 
@@ -478,6 +507,7 @@ def main() -> None:
         target_clf=args.target_clf,
         val_size=args.val_size,
         test_size=args.test_size,
+        fit_all_data=args.fit_all_data,
     )
 
 
