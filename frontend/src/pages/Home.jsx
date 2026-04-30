@@ -24,7 +24,7 @@ export default function Home() {
     return addHours(baseDate, horizonHours)
   }, [baseDate, horizonHours])
 
-  const targetDay = targetDate.getDay()
+  const targetDay = (targetDate.getDay() + 6) % 7
   const targetHour = targetDate.getHours()
 
   useEffect(() => {
