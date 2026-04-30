@@ -11,6 +11,22 @@ El objetivo es **analizar el sistema de transporte de pago en Nueva York** (taxi
 - Respaldar la propuesta con visualizaciones y estudio de mercado 
 
 ---
+
+### Componentes principales
+
+- **Backend analítico**: Pipeline de datos escalable con PySpark para procesar decenas de millones de viajes
+- **Modelos de machine learning**: Predicción de demanda máxima por zona, estimación de propinas y análisis de estrés urbano
+- **Aplicación web**: Dashboard interactivo para visualización de patrones y toma de decisiones
+- **Arquitectura por capas**: Procesamiento estructurado desde datos crudos hasta insights finales
+
+### Impacto esperado
+
+- **Para operadores de transporte**: Optimización de flotas y precios dinámicos
+- **Para ciudad**: Mejor comprensión de la movilidad urbana y planificación de infraestructuras
+- **Para usuarios**: Mejora en la experiencia de viaje mediante predicciones precisas
+
+---
+
 ### Funcionalidades
 
 - **Extracción** de fuentes reales:
@@ -30,86 +46,121 @@ El objetivo es **analizar el sistema de transporte de pago en Nueva York** (taxi
 ```
 Grupo-PD2---Transporte-NYC/
 ├── src/
-│ ├── extraccion/          ← Extracción de datos
-│ ├── procesamiento/       ← Limpieza, procesamiento y unificación de datos
-│ └── visualizaciones/     ← Análisis exploratorio y visualización
-├── config/
-│ └── settings.py          ← Centraliza toda la configuración estructural del proyecto
-├── pyproject.toml         ← Configuración del proyecto y gestión de paquetes en uv
-├── uv.lock                ← lockfile (uv)
-├── .gitignore             ← Exclusión de archivos innecesarios
-└── README.md              ← Este documento, Documentación principal del proyecto
+│ ├── extraccion/          ← Extracción de datos desde APIs y fuentes externas
+│ │ └── main.py                     ← Orquestador de extracción
+│ ├── procesamiento/       ← Pipeline de limpieza y transformación
+│ │ ├── capa1/             ← Validación estructural por servicio
+│ │ ├── capa2/             ← Estandarización y normalización
+│ │ └── capa3/             ← Agregaciones y datasets ML-ready
+│ ├── ml/                  ← Modelos de machine learning
+│ │ ├── models_ej1/        ← Modelos para ejercicios 1a-1d
+│ │ └── models_ej2/        ← Modelos para ejercicio 2
+│ └── visualizaciones/     ← Análisis exploratorio y gráficos
+├── backend/               ← API REST con FastAPI
+│ └── app/
+├── frontend/              ← Aplicación web React + Vite
+├── config/                ← Configuración centralizada
+├── data/                  ← Datos organizados por capas
+│ ├── raw/                 ← Datos originales descargados
+│ ├── validated/           ← Datos validados (capa 1)
+│ ├── standarized/         ← Datos estandarizados (capa 2)
+│ ├── aggregated/          ← Agregados para análisis (capa 3)
+│ └── external/            ← Datos externos (meteo, eventos)
+├── docs/                  ← Documentación detallada
+├── notebooks/             ← Jupyter notebooks para análisis
+├── outputs/               ← Resultados de modelos y visualizaciones
+├── pyproject.toml         ← Dependencias Python (uv)
+├── package.json           ← Scripts de proyecto
+├── uv.lock                ← Lockfile de dependencias
+└── README.md              ← Este documento
 ```
 
 ---
 
-## Índice
-Detalles completos de cada subdirectorio y archivo:
+- Archivo __`src/main.py`__: Script orquestador principal del proyecto. Ejecuta de forma secuencial el pipeline completo: extracción de datos (TLC, meteorología, eventos), procesamiento por capas (capa1 → capa2 → capa3) y entrenamiento de modelos de machine learning. Permite ejecutar todo el proyecto desde datos externos hasta modelos entrenados mediante un único comando.
 
-- Directorio __`src/`__: Contiene el código fuente del proyecto.
+---
 
-    - Directorio __`extraccion/`__: Código responsable de la extracción de datos desde diversas fuentes.
-      
-            -   Archivo `download_event_data.py`: Descarga eventos desde NYC Open Data (Socrata), los agrega por date+hour+borough+event_type, y guarda un Parquet por mes.
-            -   Archivo `download_from_minio.py`: Descarga todos los datos subidos a MinIO
-            -   Archivo `download_meteo_data.py`: Descarga datos meteorológicos horarios de NYC desde Open-Meteo por meses/años, los guarda en Parquet y permite repetir descargas sin duplicar archivos.
-            -   Archivo `download_tlc_data.py`: Descarga los ficheros Parquet mensuales de la NYC TLC (yellow/green/fhv/fhvhv) para un rango de fechas, gestionando skips, errores HTTP y barras de progreso.
-            -   Archivo `main.py`:  Ejecuta los .py del modulo extraccion en orden salvo `download_from_minio.py` (uso opciónal).
+## Flujo de datos (pipeline completo)
 
-    - Directorio __`procesamiento/`__: Código encargado de procesar y estructurar los datos para su uso óptimo.
-        -   Archivo __`capa 0/main.py`__: Realiza una exploración diagnóstica sobre muestras representativas de los datos RAW.
-Extrae estadísticas básicas (volumen estimado, precio medio, hora pico, número de variables) y genera un resumen en CSV y Markdown.
+El proyecto implementa un pipeline de datos estructurado en capas que transforma datos crudos en insights accionables:
 
-        -   Directorio __`capa 1/`__: Contiene código responsable de limpiar los datos extraídos.
+### Capa 1: Validación y limpieza
+- **Objetivo**: Control de calidad estructural usando Data Dictionaries oficiales de TLC
+- **Procesamiento**: 
+  - Validación de tipos de datos y dominios permitidos
+  - Detección de errores temporales (fechas futuras, duración negativa)
+  - Cálculo de velocidad implícita y filtros de plausibilidad
+- **Salida**: Datos validados separados en `clean` y `bad_rows`, con reports JSON
 
-                -   Archivo `fhv.py`: Valida estructura y coherencia del servicio FHV. Comprueba tipos, timestamps, rangos válidos y separa registros en clean y badrows.
-                -   Archivo `fhvhv.py`: Validación específica para el servicio FHVHV (High Volume). Aplica controles estructurales y temporales adaptados a este esquema.
-                -   Archivo `capa1_green.py`: Valida los datos del servicio Green Taxi, asegurando consistencia en campos monetarios, distancias y timestamps.
-                -   Archivo `capa1_yellow.py`: Valida los datos del servicio Green Taxi, asegurando consistencia en campos monetarios, distancias y timestamps.
-                -   Archivo `main.py`: Ejecuta secuencialmente los validadores de cada servicio y genera los datasets limpios.
-               
-        -   Directorio __`capa 2/`__: Contiene scripts que integran y fusionan los diferentes conjuntos de datos procesados.
-          
-                -   Archivo `capa2_tlc.py`: Une los parquets RAW de taxis/VTC y los deja en un schema estándar (timestamps, variables temporales, precio unificado) y añade lookup de zonas; guarda en data/standarized/.
-                -   Archivo `capa2_eventos.py`: Limpia y tipa los eventos (date/hour/borough/type), crea variables temporales y lo deja listo en formato estandarizado particionado en data/standarized/events/.
-                -   Archivo `capa2_meteo.py`: Limpia y tipa meteorología (date/hour + numéricas), añade variables temporales y la guarda como parquets por año-mes en data/external/meteo/standarized/.
-                -   Archivo `main.py`: Orquesta la ejecución de todos los scripts de capa 2.
+### Capa 2: Estandarización
+- **Objetivo**: Unificación de esquemas entre servicios (yellow, green, fhvhv)
+- **Procesamiento**:
+  - Normalización de timestamps y columnas de precio
+  - Cálculo de variables derivadas (duración, día de semana, etc.)
+  - Enriquecimiento con zonas TLC (borough y zone)
+- **Salida**: Datos estandarizados en Parquet particionado por año/mes/servicio
 
-        -   Directorio __`capa 3/`__: Contiene scripts que integran y fusionan los diferentes conjuntos de datos procesados.
-          
-                -   Archivo `capa3_tlc.py`: Genera agregados de negocio de viajes (tendencia diaria, hotspots por zona/hora, y variabilidad de precio tipo “IQR”) y los guarda en data/aggregated/.
-                -   Archivo `capa3_eventos.py`: Genera agregados de negocio de viajes (tendencia diaria, hotspots por zona/hora, y variabilidad de precio tipo “IQR”) y los guarda en data/aggregated/.
-                -   Archivo `capa3_meteo.py`: Construye agregados meteo por hora+día, resumen diario y patrón horario medio, y lo deja en data/external/meteo/aggregated/.
-                -   Archivo `main.py`: Ejecuta los procesos de agregación de capa 3 de forma coordinada.
-            
-        -   Archivo __`main.py`__: Orquesta el pipeline completo de procesamiento: capa0 → capa1 → capa2 → capa3. Permite ejecutar todo el flujo estructurado desde datos RAW hasta agregados finales.
+### Capa 3: Agregación y datasets ML-ready
+- **Objetivo**: Generación de agregados para análisis y construcción de datasets para modelos
+- **Procesamiento**:
+  - Agregados base: demanda diaria, hotspots zona-hora, variabilidad de precios
+  - Enriquecimiento con datos externos (meteorología, eventos, alquileres, restaurantes)
+  - Construcción de features para ML (lags, rolling means, variables externas)
+- **Salida**: Datasets particionados listos para modelado y visualización
 
-- Directorio __`visualizaciones/`__: Código encargado de procesar y estructurar los datos para su uso óptimo.
+### Modelos de Machine Learning
+- **Ejercicio 1a**: Clasificación multiclase para predecir zona de máxima demanda en la siguiente hora
+- **Ejercicio 1b**: Regresión para predecir monto de propina usando solo información a priori
+- **Ejercicio 1c-1d**: Análisis de patrones de demanda y poder adquisitivo
+- **Ejercicio 2**: Modelos para dashboard de estrés urbano
 
-  -   Directorio __`viz_conjuntas/`__: Cruza datos TLC + Meteorología + Eventos.
+### Visualizaciones y aplicación web
+- **Backend**: API REST con FastAPI para servir datos y predicciones
+- **Frontend**: Dashboard React con mapas interactivos y gráficos de tendencias
+- **Visualizaciones**: Heatmaps, series temporales, análisis comparativos
 
-                -   Archivo `viz_2024.py`: Genera visualizaciones conjuntas para un año concreto. Utiliza agregados de capa 3 y Spark para el cruce eficiente de datasets.
+---
 
-  -   Directorio __`viz_meteo/`__: Contiene código responsable de limpiar los datos extraídos.
-     
-                -   Archivo `clima_tipico.py`: Grafica el “día promedio” de NYC usando el patrón horario (temp media + desviación).
-                -   Archivo `estacionalidad.py`: Visualiza estacionalidad: boxplots de temperatura por mes y comparación de precipitación entre laborables vs finde.
-                -   Archivo `horaria_calor_viento.py`: Genera heatmaps por día de semana y hora para temperatura y viento (ej: enero vs diciembre).
-                -   Archivo `overview.py`: Muestra la evolución histórica diaria (temperatura media/min/max + precipitación total) para detectar días extremos.
-                -   Archivo `tendecias_clima.py`: Saca tendencias generales (temp + precip) y un gráfico con la distribución de códigos WMO (weather_code).
+## Tecnologías utilizadas
 
+### Lenguajes y frameworks principales
+- **Python 3.11+**: Lenguaje principal para todo el pipeline de datos y ML
+- **PySpark 4.1+**: Procesamiento distribuido de big data (decenas de millones de filas)
+- **FastAPI**: Framework para API REST del backend
+- **React 19**: Framework JavaScript para el frontend
+- **Vite**: Build tool para desarrollo rápido del frontend
 
-  -   Directorio __`viz_tlc/`__: Contiene código responsable de limpiar los datos extraídos.
-     
-                -   Archivo `visualizaciones_compartidas.py.py`: Genera scatterplots comparativos (distancia vs precio) entre servicios (yellow/green/fhvhv) para varios meses, usando muestreo eficiente con PyArrow.
-                -   Archivo `visualizaciones_individuales.py`: Procesa cada Parquet por servicio y crea visualizaciones por archivo (heatmap de demanda por día/hora y dispersión precio vs distancia), aplicando muestreo para evitar problemas de memoria.
-                -   Archivo `viz_01_overview.py`: Crea un overview temporal desde Capa 3: evolución del número de viajes y del precio medio diario por servicio.
-                -   Archivo `viz_02_hotspots.py`: Construye heatmaps de “hotspots” (demanda media y precio medio) por zona y hora, quedándose con las zonas top por volumen para que sea legible.
-                -   Archivo `viz_03_taxi_vs_vtc.py`: Compara Taxi vs VTC en zonas clave, graficando patrones horarios de demanda y precio medio por servicio.
-                -   Archivo `viz_04_tensions.py`: Analiza “tensiones” del mercado con la Capa 3: scatter volumen vs variabilidad (IQR) y ranking de oportunidades con biz_score.
-                -   Archivo `viz_common.py`: Funciones comunes para las visualizaciones (Spark session, lectura de Capa 3, normalización de fechas y guardado de figuras).
+### Librerías de datos y ML
+- **Pandas/PyArrow**: Manipulación de datos tabulares y lectura de Parquet
+- **DuckDB**: Consultas SQL analíticas sobre datos locales
+- **Scikit-learn**: Modelos de ML tradicionales (regresión, clasificación)
+- **XGBoost**: Gradient boosting para problemas de clasificación/regresión
+- **PyTorch**: Deep learning (redes neuronales para ejercicio 2)
+- **GeoPandas**: Análisis geoespacial y mapas
 
-- Archivo __`main.py/`__: Script orquestador principal del proyecto. Ejecuta de forma secuencial el pipeline completo, lanzando primero los procesos de extracción de datos (src/extraccion/) y posteriormente el flujo de procesamiento por capas (capa0 → capa1 → capa2 → capa3). Permite ejecutar todo el proyecto desde datos externos hasta agregados finales listos para análisis y visualización mediante un único comando.
+### Visualización y UI
+- **Matplotlib/Seaborn**: Gráficos estáticos para análisis exploratorio
+- **Folium/Leaflet**: Mapas interactivos en el dashboard
+- **Recharts**: Gráficos interactivos en React
+- **Jupyter**: Notebooks para experimentación y documentación
+
+### Infraestructura y herramientas
+- **uv**: Gestor moderno de dependencias Python (reemplaza pip/venv)
+- **MinIO**: Object storage para datos (S3-compatible)
+- **Git**: Control de versiones
+- **Rich**: CLI con barras de progreso y formato coloreado
+
+### Fuentes de datos
+- **TLC Trip Records**: Viajes de taxis/VTC en formato Parquet desde AWS S3
+- **Open-Meteo API**: Datos meteorológicos horarios
+- **NYC Open Data**: Eventos urbanos y datos socioeconómicos
+- **Zonificación TLC**: Catálogo oficial de zonas de taxi en NYC
+
+### Entorno de desarrollo
+- **Java 17**: Requerido para PySpark
+- **VS Code**: IDE recomendado con extensiones Python y Jupyter
+- **Linux/macOS/Windows**: Soportado (con configuraciones específicas para Spark)
 
 ---
 
