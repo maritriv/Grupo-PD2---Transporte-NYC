@@ -57,6 +57,14 @@ def main() -> None:
             "src.ml.models_ej2.f_compare_reports",
             [],
         ),
+        (
+            "src.ml.models_ej2.g_export_best_model",
+            [],
+        ),
+        (
+            "src.ml.models_ej2.h_buil_web_features",
+            [],
+        ),
     ]
 
     for modulo, args in runs:
