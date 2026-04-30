@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
+import { getZoneForecast } from "../api/client"
 
 function getStressLabel(score) {
   if (score === null || score === undefined || Number.isNaN(score)) return "Sin datos"
@@ -18,42 +19,63 @@ function getStressColor(score) {
   return "#dc2626"
 }
 
-function clamp(value, min = 0, max = 1) {
-  return Math.max(min, Math.min(max, value))
-}
+function ForecastDetails({ zoneId, zoneName, score, primaryColor, dayOfWeek, hour }) {
+  const [forecast, setForecast] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
 
-function formatHourLabel(date) {
-  return new Intl.DateTimeFormat("es-ES", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date)
-}
+  useEffect(() => {
+    async function loadForecast() {
+      try {
+        setLoading(true)
+        setError("")
 
-function buildForecast(score) {
-  const now = new Date()
-  const offsets = [0, 2, 4, 6, 12, 24]
+        const data = await getZoneForecast(zoneId, dayOfWeek, hour)
 
-  return offsets.map((offset, index) => {
-    const date = new Date(now)
-    date.setHours(date.getHours() + offset)
+        const parsed = (data.forecast || []).map((item) => ({
+          timeLabel: item.time_label,
+          score: Number(item.score),
+          rawStress: Number(item.raw_stress),
+          label: getStressLabel(Number(item.score)),
+          color: getStressColor(Number(item.score)),
+        }))
 
-    const wave = Math.sin((index / (offsets.length - 1)) * Math.PI) * 0.12
-    const trend = index < 3 ? 0.04 : -0.03
-    const simulated = clamp(score + wave + trend)
-
-    return {
-      hourOffset: offset,
-      timeLabel: offset === 0 ? "Ahora" : `+${offset}h`,
-      clockLabel: formatHourLabel(date),
-      score: Number(simulated.toFixed(2)),
-      label: getStressLabel(simulated),
-      color: getStressColor(simulated),
+        setForecast(parsed)
+      } catch (err) {
+        console.error(err)
+        setError("No se pudo cargar la previsión real")
+        setForecast([])
+      } finally {
+        setLoading(false)
+      }
     }
-  })
-}
 
-function ForecastDetails({ zoneName, score, primaryColor }) {
-  const forecast = useMemo(() => buildForecast(score), [score])
+    loadForecast()
+  }, [zoneId, dayOfWeek, hour])
+
+  if (loading) {
+    return (
+      <div style={{ marginTop: "12px", color: "#6b7280" }}>
+        Cargando previsión real...
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div style={{ marginTop: "12px", color: "#dc2626" }}>
+        {error}
+      </div>
+    )
+  }
+
+  if (forecast.length === 0) {
+    return (
+      <div style={{ marginTop: "12px", color: "#6b7280" }}>
+        Sin previsión disponible
+      </div>
+    )
+  }
 
   const peak = forecast.reduce((best, item) =>
     item.score > best.score ? item : best
@@ -137,10 +159,10 @@ function ForecastDetails({ zoneName, score, primaryColor }) {
           }}
         >
           <div style={{ fontSize: "12px", color: "#6b7280", marginBottom: "4px" }}>
-            Hora punta estimada
+            Horizonte de mayor tensión
           </div>
           <div style={{ color: primaryColor, fontWeight: 700 }}>
-            {peak.timeLabel} · {peak.clockLabel}
+            {peak.timeLabel}
           </div>
         </div>
       </div>
@@ -167,8 +189,8 @@ function ForecastDetails({ zoneName, score, primaryColor }) {
           <thead>
             <tr style={{ background: "#f3f4f6", color: "#374151" }}>
               <th style={{ textAlign: "left", padding: "8px 10px" }}>Horizonte</th>
-              <th style={{ textAlign: "left", padding: "8px 10px" }}>Hora</th>
               <th style={{ textAlign: "left", padding: "8px 10px" }}>Score</th>
+              <th style={{ textAlign: "left", padding: "8px 10px" }}>Stress real</th>
               <th style={{ textAlign: "left", padding: "8px 10px" }}>Estado</th>
             </tr>
           </thead>
@@ -176,8 +198,8 @@ function ForecastDetails({ zoneName, score, primaryColor }) {
             {forecast.map((item) => (
               <tr key={item.timeLabel} style={{ borderTop: "1px solid #e5e7eb" }}>
                 <td style={{ padding: "8px 10px" }}>{item.timeLabel}</td>
-                <td style={{ padding: "8px 10px" }}>{item.clockLabel}</td>
                 <td style={{ padding: "8px 10px" }}>{item.score.toFixed(2)}</td>
+                <td style={{ padding: "8px 10px" }}>{item.rawStress.toFixed(2)}</td>
                 <td style={{ padding: "8px 10px", color: item.color, fontWeight: 600 }}>
                   {item.label}
                 </td>
@@ -200,7 +222,7 @@ function ForecastDetails({ zoneName, score, primaryColor }) {
   )
 }
 
-export default function AlertsPanel({ zones, primaryColor }) {
+export default function AlertsPanel({ zones, primaryColor, dayOfWeek, hour }) {
   const [zoneNames, setZoneNames] = useState({})
   const [expandedZoneId, setExpandedZoneId] = useState(null)
 
@@ -243,6 +265,7 @@ export default function AlertsPanel({ zones, primaryColor }) {
     return [...zones]
       .filter((z) => Number(z.score) >= 0.6)
       .sort((a, b) => Number(b.score) - Number(a.score))
+      .slice(0, 4)
   }, [zones])
 
   function toggleDetails(zoneId) {
@@ -319,9 +342,12 @@ export default function AlertsPanel({ zones, primaryColor }) {
 
               {isExpanded && (
                 <ForecastDetails
+                  zoneId={zoneId}
                   zoneName={zoneName}
                   score={score}
                   primaryColor={primaryColor}
+                  dayOfWeek={dayOfWeek}
+                  hour={hour}
                 />
               )}
             </div>

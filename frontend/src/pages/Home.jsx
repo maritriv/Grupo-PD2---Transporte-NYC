@@ -24,6 +24,7 @@ export default function Home() {
     return addHours(baseDate, horizonHours)
   }, [baseDate, horizonHours])
 
+  // JS: domingo=0. Modelo/pandas: lunes=0.
   const targetDay = (targetDate.getDay() + 6) % 7
   const targetHour = targetDate.getHours()
 
@@ -35,6 +36,7 @@ export default function Home() {
     try {
       setLoading(true)
       setError("")
+
       const data = await getMapData(targetDay, targetHour)
       setZones(data?.zones || [])
     } catch (err) {
@@ -125,7 +127,13 @@ export default function Home() {
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-              <AlertsPanel zones={zones} primaryColor={PRIMARY_COLOR} />
+              <AlertsPanel
+                zones={zones}
+                primaryColor={PRIMARY_COLOR}
+                dayOfWeek={targetDay}
+                hour={targetHour}
+              />
+
               <HistoryChart primaryColor={PRIMARY_COLOR} />
             </div>
           </div>

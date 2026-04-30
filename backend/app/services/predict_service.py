@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import math
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import joblib
+import numpy as np
 import pandas as pd
 
 from backend.app.api.schemas.common import Meta
@@ -23,17 +23,10 @@ WEB_FEATURES_PATH = WEB_MODEL_DIR / "web_features.parquet"
 METADATA_PATH = WEB_MODEL_DIR / "model_metadata.json"
 
 
-def _sigmoid(x: float) -> float:
-    try:
-        return float(1.0 / (1.0 + math.exp(-x)))
-    except OverflowError:
-        return 0.0 if x < 0 else 1.0
-
-
-def _to_level_from_raw(raw_stress: float) -> str:
-    if raw_stress < 1.0:
+def _score_to_level(score: float) -> str:
+    if score <= 0.33:
         return "low"
-    if raw_stress < 3.0:
+    if score <= 0.66:
         return "medium"
     return "high"
 
@@ -48,7 +41,7 @@ def _read_feature_columns() -> list[str]:
     if isinstance(data, list):
         return list(data)
 
-    raise ValueError("feature_columns.json debe ser una lista o contener 'feature_columns'.")
+    raise ValueError("feature_columns.json debe ser lista o contener 'feature_columns'.")
 
 
 def _read_model_version() -> str:
@@ -86,7 +79,30 @@ def _load_assets():
     web_features = pd.read_parquet(WEB_FEATURES_PATH)
     model_version = _read_model_version()
 
-    return regressor, classifier, feature_columns, web_features, model_version
+    x_all = web_features.reindex(columns=feature_columns, fill_value=0)
+    x_all = x_all.apply(pd.to_numeric, errors="coerce").fillna(0)
+
+    raw_all = regressor.predict(x_all)
+    raw_low = float(np.percentile(raw_all, 5))
+    raw_high = float(np.percentile(raw_all, 95))
+
+    if raw_high <= raw_low:
+        raw_high = raw_low + 1.0
+
+    calibration = {
+        "raw_low": raw_low,
+        "raw_high": raw_high,
+    }
+
+    return regressor, classifier, feature_columns, web_features, model_version, calibration
+
+
+def _raw_to_score(raw_stress: float, calibration: dict) -> float:
+    raw_low = calibration["raw_low"]
+    raw_high = calibration["raw_high"]
+
+    score = (raw_stress - raw_low) / (raw_high - raw_low)
+    return float(np.clip(score, 0.0, 1.0))
 
 
 def _select_feature_row(
@@ -126,7 +142,7 @@ def _select_feature_row(
 
 
 def predict(req: PredictRequest) -> PredictResponse:
-    regressor, classifier, feature_columns, web_features, model_version = _load_assets()
+    regressor, classifier, feature_columns, web_features, model_version, calibration = _load_assets()
 
     row = _select_feature_row(
         web_features=web_features,
@@ -139,7 +155,7 @@ def predict(req: PredictRequest) -> PredictResponse:
     x = x.apply(pd.to_numeric, errors="coerce").fillna(0)
 
     raw_stress = float(regressor.predict(x)[0])
-    score = _sigmoid(raw_stress)
+    score = _raw_to_score(raw_stress, calibration)
 
     is_stress = None
     if classifier is not None:
@@ -152,6 +168,56 @@ def predict(req: PredictRequest) -> PredictResponse:
         score=score,
         raw_stress=raw_stress,
         is_stress=is_stress,
-        level=_to_level_from_raw(raw_stress),
+        level=_score_to_level(score),
         meta=Meta(model_version=model_version),
     )
+
+
+def predict_zone_at(zone_id: int, hour: int, day_of_week: int) -> dict:
+    req = PredictRequest(
+        zone_id=zone_id,
+        hour=hour,
+        day_of_week=day_of_week,
+    )
+    pred = predict(req)
+
+    return {
+        "zone_id": pred.zone_id,
+        "hour": pred.hour,
+        "day_of_week": pred.day_of_week,
+        "score": pred.score,
+        "raw_stress": pred.raw_stress,
+        "is_stress": pred.is_stress,
+        "level": pred.level,
+    }
+
+
+def build_zone_forecast(zone_id: int, hour: int, day_of_week: int) -> dict:
+    offsets = [0, 2, 4, 6, 12, 24]
+
+    forecast = []
+
+    for offset in offsets:
+        future_hour = (hour + offset) % 24
+        future_day = (day_of_week + ((hour + offset) // 24)) % 7
+
+        item = predict_zone_at(
+            zone_id=zone_id,
+            hour=future_hour,
+            day_of_week=future_day,
+        )
+
+        item["hour_offset"] = offset
+        item["time_label"] = "Ahora" if offset == 0 else f"+{offset}h"
+
+        forecast.append(item)
+
+    return {
+        "zone_id": zone_id,
+        "base_hour": hour,
+        "base_day_of_week": day_of_week,
+        "forecast": forecast,
+        "meta": {
+            "model_version": _read_model_version(),
+        },
+    }
