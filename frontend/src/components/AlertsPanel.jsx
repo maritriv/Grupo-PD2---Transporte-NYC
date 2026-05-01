@@ -54,35 +54,19 @@ function ForecastDetails({ zoneId, zoneName, score, primaryColor, dayOfWeek, hou
   }, [zoneId, dayOfWeek, hour])
 
   if (loading) {
-    return (
-      <div style={{ marginTop: "12px", color: "#6b7280" }}>
-        Cargando previsión real...
-      </div>
-    )
+    return <div style={{ marginTop: "12px", color: "#6b7280" }}>Cargando previsión real...</div>
   }
 
   if (error) {
-    return (
-      <div style={{ marginTop: "12px", color: "#dc2626" }}>
-        {error}
-      </div>
-    )
+    return <div style={{ marginTop: "12px", color: "#dc2626" }}>{error}</div>
   }
 
   if (forecast.length === 0) {
-    return (
-      <div style={{ marginTop: "12px", color: "#6b7280" }}>
-        Sin previsión disponible
-      </div>
-    )
+    return <div style={{ marginTop: "12px", color: "#6b7280" }}>Sin previsión disponible</div>
   }
 
-  const peak = forecast.reduce((best, item) =>
-    item.score > best.score ? item : best
-  )
-
-  const average =
-    forecast.reduce((acc, item) => acc + item.score, 0) / forecast.length
+  const peak = forecast.reduce((best, item) => (item.score > best.score ? item : best))
+  const average = forecast.reduce((acc, item) => acc + item.score, 0) / forecast.length
 
   return (
     <div
@@ -102,68 +86,24 @@ function ForecastDetails({ zoneId, zoneName, score, primaryColor, dayOfWeek, hou
           marginBottom: "14px",
         }}
       >
-        <div
-          style={{
-            padding: "10px",
-            borderRadius: "10px",
-            background: "white",
-            border: "1px solid #e5e7eb",
-          }}
-        >
-          <div style={{ fontSize: "12px", color: "#6b7280", marginBottom: "4px" }}>
-            Estado actual
-          </div>
-          <div style={{ color: getStressColor(score), fontWeight: 700 }}>
-            {getStressLabel(score)}
-          </div>
+        <div style={{ padding: "10px", borderRadius: "10px", background: "white", border: "1px solid #e5e7eb" }}>
+          <div style={{ fontSize: "12px", color: "#6b7280", marginBottom: "4px" }}>Estado actual</div>
+          <div style={{ color: getStressColor(score), fontWeight: 700 }}>{getStressLabel(score)}</div>
         </div>
 
-        <div
-          style={{
-            padding: "10px",
-            borderRadius: "10px",
-            background: "white",
-            border: "1px solid #e5e7eb",
-          }}
-        >
-          <div style={{ fontSize: "12px", color: "#6b7280", marginBottom: "4px" }}>
-            Score actual
-          </div>
-          <div style={{ color: primaryColor, fontWeight: 700 }}>
-            {score.toFixed(2)}
-          </div>
+        <div style={{ padding: "10px", borderRadius: "10px", background: "white", border: "1px solid #e5e7eb" }}>
+          <div style={{ fontSize: "12px", color: "#6b7280", marginBottom: "4px" }}>Score actual</div>
+          <div style={{ color: primaryColor, fontWeight: 700 }}>{score.toFixed(2)}</div>
         </div>
 
-        <div
-          style={{
-            padding: "10px",
-            borderRadius: "10px",
-            background: "white",
-            border: "1px solid #e5e7eb",
-          }}
-        >
-          <div style={{ fontSize: "12px", color: "#6b7280", marginBottom: "4px" }}>
-            Pico previsto
-          </div>
-          <div style={{ color: getStressColor(peak.score), fontWeight: 700 }}>
-            {peak.score.toFixed(2)}
-          </div>
+        <div style={{ padding: "10px", borderRadius: "10px", background: "white", border: "1px solid #e5e7eb" }}>
+          <div style={{ fontSize: "12px", color: "#6b7280", marginBottom: "4px" }}>Pico previsto</div>
+          <div style={{ color: getStressColor(peak.score), fontWeight: 700 }}>{peak.score.toFixed(2)}</div>
         </div>
 
-        <div
-          style={{
-            padding: "10px",
-            borderRadius: "10px",
-            background: "white",
-            border: "1px solid #e5e7eb",
-          }}
-        >
-          <div style={{ fontSize: "12px", color: "#6b7280", marginBottom: "4px" }}>
-            Horizonte de mayor tensión
-          </div>
-          <div style={{ color: primaryColor, fontWeight: 700 }}>
-            {peak.timeLabel}
-          </div>
+        <div style={{ padding: "10px", borderRadius: "10px", background: "white", border: "1px solid #e5e7eb" }}>
+          <div style={{ fontSize: "12px", color: "#6b7280", marginBottom: "4px" }}>Horizonte de mayor tensión</div>
+          <div style={{ color: primaryColor, fontWeight: 700 }}>{peak.timeLabel}</div>
         </div>
       </div>
 
@@ -179,13 +119,7 @@ function ForecastDetails({ zoneId, zoneName, score, primaryColor, dayOfWeek, hou
           background: "white",
         }}
       >
-        <table
-          style={{
-            width: "100%",
-            borderCollapse: "collapse",
-            fontSize: "13px",
-          }}
-        >
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
           <thead>
             <tr style={{ background: "#f3f4f6", color: "#374151" }}>
               <th style={{ textAlign: "left", padding: "8px 10px" }}>Horizonte</th>
@@ -200,22 +134,14 @@ function ForecastDetails({ zoneId, zoneName, score, primaryColor, dayOfWeek, hou
                 <td style={{ padding: "8px 10px" }}>{item.timeLabel}</td>
                 <td style={{ padding: "8px 10px" }}>{item.score.toFixed(2)}</td>
                 <td style={{ padding: "8px 10px" }}>{item.rawStress.toFixed(2)}</td>
-                <td style={{ padding: "8px 10px", color: item.color, fontWeight: 600 }}>
-                  {item.label}
-                </td>
+                <td style={{ padding: "8px 10px", color: item.color, fontWeight: 600 }}>{item.label}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      <div
-        style={{
-          marginTop: "10px",
-          fontSize: "12px",
-          color: "#6b7280",
-        }}
-      >
+      <div style={{ marginTop: "10px", fontSize: "12px", color: "#6b7280" }}>
         Media prevista próximas horas: <strong>{average.toFixed(2)}</strong>
       </div>
     </div>
@@ -225,6 +151,7 @@ function ForecastDetails({ zoneId, zoneName, score, primaryColor, dayOfWeek, hou
 export default function AlertsPanel({ zones, primaryColor, dayOfWeek, hour }) {
   const [zoneNames, setZoneNames] = useState({})
   const [expandedZoneId, setExpandedZoneId] = useState(null)
+  const [sortOrder, setSortOrder] = useState("desc")
 
   useEffect(() => {
     async function loadZoneNames() {
@@ -233,8 +160,8 @@ export default function AlertsPanel({ zones, primaryColor, dayOfWeek, hour }) {
         if (!res.ok) throw new Error("No se pudo cargar el GeoJSON")
 
         const data = await res.json()
-
         const mapping = {}
+
         for (const feature of data.features || []) {
           const props = feature.properties || {}
           const id = Number(
@@ -263,10 +190,14 @@ export default function AlertsPanel({ zones, primaryColor, dayOfWeek, hour }) {
 
   const alerts = useMemo(() => {
     return [...zones]
-      .filter((z) => Number(z.score) >= 0.6)
-      .sort((a, b) => Number(b.score) - Number(a.score))
+      .filter((z) => Number(z.score) >= 0.4)
+      .sort((a, b) =>
+        sortOrder === "desc"
+          ? Number(b.score) - Number(a.score)
+          : Number(a.score) - Number(b.score)
+      )
       .slice(0, 4)
-  }, [zones])
+  }, [zones, sortOrder])
 
   function toggleDetails(zoneId) {
     setExpandedZoneId((current) => (current === zoneId ? null : zoneId))
@@ -281,9 +212,35 @@ export default function AlertsPanel({ zones, primaryColor, dayOfWeek, hour }) {
         padding: "20px",
       }}
     >
-      <h3 style={{ marginTop: 0, color: primaryColor }}>
-        Alertas
-      </h3>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "12px",
+          marginBottom: "14px",
+        }}
+      >
+        <h3 style={{ margin: 0, color: primaryColor }}>Alertas</h3>
+
+        <select
+          value={sortOrder}
+          onChange={(e) => setSortOrder(e.target.value)}
+          style={{
+            border: "1px solid #d1d5db",
+            borderRadius: "8px",
+            padding: "6px 8px",
+            fontSize: "12px",
+            color: primaryColor,
+            background: "white",
+            cursor: "pointer",
+            fontWeight: 600,
+          }}
+        >
+          <option value="desc">Mayor estrés</option>
+          <option value="asc">Menor estrés</option>
+        </select>
+      </div>
 
       {alerts.length === 0 ? (
         <p style={{ color: "#6b7280" }}>No hay alertas activas</p>
@@ -316,9 +273,7 @@ export default function AlertsPanel({ zones, primaryColor, dayOfWeek, hour }) {
                 {zoneName}
               </strong>
 
-              <div style={{ color: labelColor, marginBottom: "4px" }}>
-                {label}
-              </div>
+              <div style={{ color: labelColor, marginBottom: "4px" }}>{label}</div>
 
               <small style={{ display: "block", marginBottom: "10px" }}>
                 Score: {score.toFixed(2)}

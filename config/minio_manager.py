@@ -36,7 +36,7 @@ class MinioManager:
         self.credentials = self._cargar_credenciales(credentials_path)
         self.client = self._crear_cliente()
         self.default_bucket = "pd2"
-        self.base_dir = "mcbrides/"
+        self.base_dir = "macbrides/"
         
         logger.info(f"Cliente MinIO inicializado.")
     
@@ -52,11 +52,14 @@ class MinioManager:
     
     def _crear_cliente(self) -> Minio:
         """Crea y retorna el cliente de MinIO."""
+        url = self.credentials.get("url", "https://minio.fdi.ucm.es")
+        endpoint = url.replace("https://", "").replace("http://", "").rstrip("/")
+
         return Minio(
-            endpoint="play.min.io",
+            endpoint=endpoint,
             access_key=self.credentials["accessKey"],
             secret_key=self.credentials["secretKey"],
-            secure=self.credentials.get("secure", True)
+            secure=url.startswith("https://"),
         )
     
     def subir_archivo(

@@ -26,7 +26,7 @@ def create_app() -> FastAPI:
     )
 
     for r in all_routers:
-        app.include_router(r, prefix=settings.api_prefix)
+        app.include_router(r, prefix="/api")
 
     @app.get("/")
     def root():

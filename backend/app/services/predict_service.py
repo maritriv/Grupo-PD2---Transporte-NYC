@@ -6,11 +6,14 @@ from pathlib import Path
 from typing import Any
 
 import joblib
+import os
+from config.minio_manager import MinioManager
 import numpy as np
 import pandas as pd
 
 from backend.app.api.schemas.common import Meta
 from backend.app.api.schemas.predict import PredictRequest, PredictResponse
+from src.ml.models_ej2.common.minio_web import download_file_from_minio
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -22,6 +25,7 @@ FEATURE_COLUMNS_PATH = WEB_MODEL_DIR / "feature_columns.json"
 WEB_FEATURES_PATH = WEB_MODEL_DIR / "web_features.parquet"
 METADATA_PATH = WEB_MODEL_DIR / "model_metadata.json"
 
+MINIO_WEB_FEATURES_OBJECT = "outputs/ejercicio2/web_model/web_features.parquet"
 
 def _score_to_level(score: float) -> str:
     if score <= 0.33:
@@ -56,8 +60,24 @@ def _read_model_version() -> str:
         return "xgboost-web"
 
 
+def _sync_web_features_from_minio() -> None:
+    use_minio = os.environ.get("USE_MINIO_WEB_FEATURES", "false").lower() == "true"
+
+    if not use_minio:
+        return
+
+    minio = MinioManager()
+    minio.descargar_archivo(
+        objeto_nombre=f"macbrides/{MINIO_WEB_FEATURES_OBJECT}",
+        archivo_destino=WEB_FEATURES_PATH,
+    )
+
+
 @lru_cache(maxsize=1)
 def _load_assets():
+
+    _sync_web_features_from_minio()
+
     missing = [
         str(path)
         for path in [REGRESSOR_PATH, FEATURE_COLUMNS_PATH, WEB_FEATURES_PATH]
@@ -220,4 +240,14 @@ def build_zone_forecast(zone_id: int, hour: int, day_of_week: int) -> dict:
         "meta": {
             "model_version": _read_model_version(),
         },
+    }
+
+def reload_assets() -> dict:
+    _load_assets.cache_clear()
+    _load_assets()
+
+    return {
+        "status": "ok",
+        "message": "Modelo y features recargados correctamente",
+        "model_dir": str(WEB_MODEL_DIR),
     }
