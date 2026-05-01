@@ -1,5 +1,23 @@
 import { useEffect, useMemo, useState } from "react"
 
+function getStressLabel(score) {
+  if (score === null || score === undefined || Number.isNaN(score)) return "Sin datos"
+  if (score <= 0.2) return "Estable"
+  if (score <= 0.4) return "Estrés bajo"
+  if (score <= 0.6) return "Estrés moderado"
+  if (score <= 0.8) return "Estrés alto"
+  return "Crítico"
+}
+
+function getStressColor(score) {
+  if (score === null || score === undefined || Number.isNaN(score)) return "#cbd5e1"
+  if (score <= 0.2) return "#6cc36a"
+  if (score <= 0.4) return "#a7c957"
+  if (score <= 0.6) return "#e0a63a"
+  if (score <= 0.8) return "#d97a45"
+  return "#dc2626"
+}
+
 export default function KPICards({ zones }) {
   const [zoneNames, setZoneNames] = useState({})
 
@@ -42,26 +60,31 @@ export default function KPICards({ zones }) {
 
     const criticalZones = zones.filter((z) => Number(z.score) > 0.8).length
 
-    const avgScore =
+    const avgScoreNumber =
       zones.length > 0
-        ? (zones.reduce((acc, z) => acc + Number(z.score), 0) / zones.length).toFixed(2)
-        : "0.00"
+        ? zones.reduce((acc, z) => acc + Number(z.score), 0) / zones.length
+        : 0
 
     const maxZone =
       zones.length > 0
-        ? zones.reduce((max, z) =>
-            Number(z.score) > Number(max.score) ? z : max
-          , zones[0])
+        ? zones.reduce(
+            (max, z) => (Number(z.score) > Number(max.score) ? z : max),
+            zones[0]
+          )
         : null
 
     const maxZoneId = maxZone ? Number(maxZone.zone_id) : null
+    const maxZoneScore = maxZone ? Number(maxZone.score) : null
     const maxZoneName = maxZoneId ? zoneNames[maxZoneId] || `Zona ${maxZoneId}` : "-"
 
     return {
       totalZones,
       criticalZones,
-      avgScore,
+      avgScore: avgScoreNumber.toFixed(2),
+      avgScoreLabel: getStressLabel(avgScoreNumber),
+      avgScoreColor: getStressColor(avgScoreNumber),
       maxZoneName,
+      maxZoneScore: maxZoneScore !== null ? maxZoneScore.toFixed(2) : "-",
     }
   }, [zones, zoneNames])
 
@@ -75,13 +98,23 @@ export default function KPICards({ zones }) {
     >
       <Card title="Zonas analizadas" value={stats.totalZones} />
       <Card title="Zonas críticas" value={stats.criticalZones} />
-      <Card title="Score medio" value={stats.avgScore} />
-      <Card title="Zona más inestable" value={stats.maxZoneName} small />
+      <Card
+        title="Score medio"
+        value={stats.avgScore}
+        subtitle={stats.avgScoreLabel}
+        subtitleColor={stats.avgScoreColor}
+      />
+      <Card
+        title="Zona más inestable"
+        value={stats.maxZoneName}
+        subtitle={`Score: ${stats.maxZoneScore}`}
+        small
+      />
     </div>
   )
 }
 
-function Card({ title, value, small = false }) {
+function Card({ title, value, subtitle, subtitleColor = "#cbd5e1", small = false }) {
   return (
     <div
       style={{
@@ -90,10 +123,11 @@ function Card({ title, value, small = false }) {
         borderRadius: "14px",
         padding: "16px",
         color: "white",
-        minHeight: "92px",
+        minHeight: "112px",
       }}
     >
       <div style={{ fontSize: "14px", color: "#cbd5e1" }}>{title}</div>
+
       <div
         style={{
           fontSize: small ? "22px" : "28px",
@@ -104,6 +138,19 @@ function Card({ title, value, small = false }) {
       >
         {value}
       </div>
+
+      {subtitle && (
+        <div
+          style={{
+            marginTop: "8px",
+            fontSize: "13px",
+            fontWeight: 600,
+            color: subtitleColor,
+          }}
+        >
+          {subtitle}
+        </div>
+      )}
     </div>
   )
 }
