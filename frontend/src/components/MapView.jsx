@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { MapContainer, TileLayer, GeoJSON, ZoomControl } from "react-leaflet"
 
 function getZoneIdFromFeature(feature) {
@@ -13,6 +13,13 @@ function getZoneIdFromFeature(feature) {
       props.objectid ??
       props.id
   )
+}
+
+function getZoneNameFromFeature(feature) {
+  const props = feature?.properties || {}
+  const zoneId = getZoneIdFromFeature(feature)
+
+  return props.zone || props.Zone || `Zona ${zoneId ?? "-"}`
 }
 
 function getColorFromScore(score) {
@@ -149,6 +156,125 @@ function PredictionControls({
   )
 }
 
+/* ===================== SEARCH ===================== */
+
+function ZoneSearch({
+  searchTerm,
+  setSearchTerm,
+  suggestions,
+  selectedZoneId,
+  clearSearch,
+  selectZone,
+  primaryColor,
+}) {
+  return (
+    <div style={{ position: "relative", marginBottom: "14px" }}>
+      <input
+        type="text"
+        value={searchTerm}
+        onChange={(e) => setSearchTerm(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && suggestions.length > 0) {
+            selectZone(suggestions[0])
+          }
+        }}
+        placeholder="Buscar zona en el mapa..."
+        style={{
+          width: "100%",
+          boxSizing: "border-box",
+          padding: "10px 38px 10px 12px",
+          borderRadius: "10px",
+          border: "1px solid #d1d5db",
+          fontSize: "14px",
+          color: "#111827",
+          outline: "none",
+          background: "white",
+        }}
+      />
+
+      {searchTerm && (
+        <button
+          onClick={clearSearch}
+          aria-label="Limpiar búsqueda"
+          style={{
+            position: "absolute",
+            right: "10px",
+            top: "10px",
+            border: "none",
+            background: "transparent",
+            fontSize: "16px",
+            cursor: "pointer",
+            color: "#6b7280",
+            lineHeight: 1,
+          }}
+        >
+          ✕
+        </button>
+      )}
+
+      {searchTerm.trim() && suggestions.length > 0 && (
+        <div
+          style={{
+            position: "absolute",
+            zIndex: 1000,
+            top: "46px",
+            left: 0,
+            right: 0,
+            background: "white",
+            border: "1px solid #e5e7eb",
+            borderRadius: "10px",
+            boxShadow: "0 10px 24px rgba(15,23,42,0.12)",
+            overflow: "hidden",
+          }}
+        >
+          {suggestions.map((zone) => (
+            <button
+              key={zone.id}
+              onClick={() => selectZone(zone)}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                padding: "10px 12px",
+                border: "none",
+                borderBottom: "1px solid #f3f4f6",
+                background: selectedZoneId === zone.id ? "#f3f4f6" : "white",
+                color: primaryColor,
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              {zone.name}
+              <span style={{ color: "#6b7280", fontWeight: 400 }}>
+                {" "}· ID {zone.id}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {searchTerm.trim() && suggestions.length === 0 && (
+        <div
+          style={{
+            position: "absolute",
+            zIndex: 1000,
+            top: "46px",
+            left: 0,
+            right: 0,
+            background: "white",
+            border: "1px solid #e5e7eb",
+            borderRadius: "10px",
+            padding: "10px 12px",
+            color: "#6b7280",
+            boxShadow: "0 10px 24px rgba(15,23,42,0.12)",
+          }}
+        >
+          No se han encontrado zonas
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ===================== MAP ===================== */
 
 export default function MapView({
@@ -162,6 +288,11 @@ export default function MapView({
   const [geojsonData, setGeojsonData] = useState(null)
   const [geojsonError, setGeojsonError] = useState("")
   const [debugInfo, setDebugInfo] = useState("")
+  const [searchTerm, setSearchTerm] = useState("")
+  const [selectedZoneId, setSelectedZoneId] = useState(null)
+
+  const mapRef = useRef(null)
+  const layerByZoneRef = useRef(new Map())
 
   useEffect(() => {
     async function loadGeojson() {
@@ -201,30 +332,66 @@ export default function MapView({
     return map
   }, [zones])
 
+  const zoneOptions = useMemo(() => {
+    if (!geojsonData) return []
+
+    return (geojsonData.features || [])
+      .map((feature) => {
+        const id = getZoneIdFromFeature(feature)
+        const name = getZoneNameFromFeature(feature)
+        const score = scoreByZone.get(id)
+
+        return {
+          id,
+          name,
+          score,
+        }
+      })
+      .filter((zone) => !Number.isNaN(zone.id))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [geojsonData, scoreByZone])
+
+  const suggestions = useMemo(() => {
+    const normalized = searchTerm.trim().toLowerCase()
+    if (!normalized) return []
+
+    return zoneOptions
+      .filter((zone) => {
+        return (
+          zone.name.toLowerCase().includes(normalized) ||
+          String(zone.id).includes(normalized)
+        )
+      })
+      .slice(0, 6)
+  }, [searchTerm, zoneOptions])
+
   function styleFeature(feature) {
     const zoneId = getZoneIdFromFeature(feature)
     const score = scoreByZone.get(zoneId)
+    const isSelected = selectedZoneId === zoneId
 
     if (score === undefined) {
       return {
         fillColor: "#e5e7eb",
-        weight: 0.7,
-        color: "#ffffff",
-        fillOpacity: 0.28,
+        weight: isSelected ? 3 : 0.7,
+        color: isSelected ? "#111827" : "#ffffff",
+        fillOpacity: isSelected ? 0.85 : 0.28,
       }
     }
 
     return {
       fillColor: getColorFromScore(score),
-      weight: 0.8,
-      color: "#ffffff",
-      fillOpacity: 0.72,
+      weight: isSelected ? 3 : 0.8,
+      color: isSelected ? "#111827" : "#ffffff",
+      fillOpacity: isSelected ? 0.9 : 0.72,
     }
   }
 
   function onEachFeature(feature, layer) {
-    const props = feature?.properties || {}
     const zoneId = getZoneIdFromFeature(feature)
+    layerByZoneRef.current.set(zoneId, layer)
+
+    const props = feature?.properties || {}
     const score = scoreByZone.get(zoneId)
     const label = getStressLabel(score)
     const zoneName = props.zone || props.Zone || `Zona ${zoneId ?? "-"}`
@@ -240,6 +407,34 @@ export default function MapView({
       `,
       { sticky: true }
     )
+  }
+
+  function selectZone(zone) {
+    setSelectedZoneId(zone.id)
+    setSearchTerm(zone.name)
+
+    const layer = layerByZoneRef.current.get(zone.id)
+    const map = mapRef.current
+
+    if (layer && map) {
+      map.fitBounds(layer.getBounds(), {
+        padding: [30, 30],
+        maxZoom: 13,
+      })
+
+      setTimeout(() => {
+        layer.openTooltip()
+      }, 250)
+    }
+  }
+
+  function clearSearch() {
+    setSearchTerm("")
+    setSelectedZoneId(null)
+
+    if (mapRef.current) {
+      mapRef.current.setView([40.7128, -74.006], 10)
+    }
   }
 
   return (
@@ -281,6 +476,16 @@ export default function MapView({
 
       <StressLegend primaryColor={primaryColor} />
 
+      <ZoneSearch
+        searchTerm={searchTerm}
+        setSearchTerm={setSearchTerm}
+        suggestions={suggestions}
+        selectedZoneId={selectedZoneId}
+        clearSearch={clearSearch}
+        selectZone={selectZone}
+        primaryColor={primaryColor}
+      />
+
       <div
         style={{
           height: "520px",
@@ -293,6 +498,7 @@ export default function MapView({
           <div style={{ color: "red", padding: "20px" }}>{geojsonError}</div>
         ) : geojsonData ? (
           <MapContainer
+            ref={mapRef}
             center={[40.7128, -74.006]}
             zoom={10}
             style={{ height: "100%", width: "100%" }}
@@ -303,6 +509,7 @@ export default function MapView({
             <TileLayer url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" />
 
             <GeoJSON
+              key={`${selectedZoneId ?? "none"}-${zones.length}`}
               data={geojsonData}
               style={styleFeature}
               onEachFeature={onEachFeature}

@@ -205,7 +205,7 @@ export default function AlertsPanel({ zones, primaryColor, dayOfWeek, hour }) {
         )
       })
     } else {
-      filtered = filtered.filter((z) => Number(z.score) >= 0.4)
+      filtered = filtered.filter((z) => Number(z.score) >= 0.0)
     }
 
     return filtered
