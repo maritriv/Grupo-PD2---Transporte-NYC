@@ -80,7 +80,7 @@ export default function HistoryChart({ primaryColor }) {
   const trendColor = getStressColor(last)
 
   function openAnalytics() {
-    alert("En el siguiente paso creamos la página de análisis completo.")
+    window.location.href = "/analytics"
   }
 
   return (
