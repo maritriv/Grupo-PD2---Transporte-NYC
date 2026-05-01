@@ -13,8 +13,6 @@ import pandas as pd
 
 from backend.app.api.schemas.common import Meta
 from backend.app.api.schemas.predict import PredictRequest, PredictResponse
-from src.ml.models_ej2.common.minio_web import download_file_from_minio
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 WEB_MODEL_DIR = PROJECT_ROOT / "outputs" / "ejercicio2" / "web_model"
