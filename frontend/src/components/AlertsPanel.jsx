@@ -152,6 +152,7 @@ export default function AlertsPanel({ zones, primaryColor, dayOfWeek, hour }) {
   const [zoneNames, setZoneNames] = useState({})
   const [expandedZoneId, setExpandedZoneId] = useState(null)
   const [sortOrder, setSortOrder] = useState("desc")
+  const [searchTerm, setSearchTerm] = useState("")
 
   useEffect(() => {
     async function loadZoneNames() {
@@ -189,19 +190,38 @@ export default function AlertsPanel({ zones, primaryColor, dayOfWeek, hour }) {
   }, [])
 
   const alerts = useMemo(() => {
-    return [...zones]
-      .filter((z) => Number(z.score) >= 0.4)
+    const normalizedSearch = searchTerm.trim().toLowerCase()
+
+    let filtered = [...zones]
+
+    if (normalizedSearch) {
+      filtered = filtered.filter((z) => {
+        const zoneId = Number(z.zone_id)
+        const zoneName = zoneNames[zoneId] || `Zona ${zoneId}`
+
+        return (
+          zoneName.toLowerCase().includes(normalizedSearch) ||
+          String(zoneId).includes(normalizedSearch)
+        )
+      })
+    } else {
+      filtered = filtered.filter((z) => Number(z.score) >= 0.4)
+    }
+
+    return filtered
       .sort((a, b) =>
         sortOrder === "desc"
           ? Number(b.score) - Number(a.score)
           : Number(a.score) - Number(b.score)
       )
       .slice(0, 4)
-  }, [zones, sortOrder])
+  }, [zones, zoneNames, searchTerm, sortOrder])
 
   function toggleDetails(zoneId) {
     setExpandedZoneId((current) => (current === zoneId ? null : zoneId))
   }
+
+  const panelTitle = searchTerm.trim() ? "Resultados" : "Alertas"
 
   return (
     <div
@@ -221,7 +241,7 @@ export default function AlertsPanel({ zones, primaryColor, dayOfWeek, hour }) {
           marginBottom: "14px",
         }}
       >
-        <h3 style={{ margin: 0, color: primaryColor }}>Alertas</h3>
+        <h3 style={{ margin: 0, color: primaryColor }}>{panelTitle}</h3>
 
         <select
           value={sortOrder}
@@ -242,8 +262,57 @@ export default function AlertsPanel({ zones, primaryColor, dayOfWeek, hour }) {
         </select>
       </div>
 
+      <div style={{ position: "relative", marginBottom: "18px" }}>
+        <input
+          type="text"
+          value={searchTerm}
+          onChange={(e) => {
+            setSearchTerm(e.target.value)
+            setExpandedZoneId(null)
+          }}
+          placeholder="Buscar zona..."
+          style={{
+            width: "100%",
+            boxSizing: "border-box",
+            padding: "10px 36px 10px 12px",
+            borderRadius: "10px",
+            border: "1px solid #d1d5db",
+            fontSize: "14px",
+            color: "#111827",
+            outline: "none",
+          }}
+        />
+
+        {searchTerm && (
+          <button
+            onClick={() => {
+              setSearchTerm("")
+              setExpandedZoneId(null)
+            }}
+            aria-label="Limpiar búsqueda"
+            style={{
+              position: "absolute",
+              right: "10px",
+              top: "50%",
+              transform: "translateY(-50%)",
+              border: "none",
+              background: "transparent",
+              fontSize: "16px",
+              cursor: "pointer",
+              color: "#6b7280",
+              lineHeight: 1,
+              padding: "4px",
+            }}
+          >
+            ✕
+          </button>
+        )}
+      </div>
+
       {alerts.length === 0 ? (
-        <p style={{ color: "#6b7280" }}>No hay alertas activas</p>
+        <p style={{ color: "#6b7280" }}>
+          {searchTerm.trim() ? "No se han encontrado zonas" : "No hay alertas activas"}
+        </p>
       ) : (
         alerts.map((z) => {
           const zoneId = Number(z.zone_id)
