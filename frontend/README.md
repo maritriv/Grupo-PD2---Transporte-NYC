@@ -50,7 +50,7 @@ Los colores representan:
 - Rojo: zona con alta presión o recomendable evitar.
 
 <p align="center">
-  <img src="../docs/images/mapa.png" width="500"/>
+  <img src="../docs/images/mapa.png" width="600"/>
 </p>
 
 ---
@@ -97,7 +97,7 @@ La página de análisis resume la información más útil para el usuario:
 - Comparación de presión media por horas.
 
 <p align="center">
-  <img src="../docs/images/analisis.png" width="500"/>
+  <img src="../docs/images/analisis.png" width="700"/>
 </p>
 
 ---
