@@ -7,28 +7,31 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
-  PieChart,
-  Pie,
   Cell,
 } from "recharts"
 import { getMapData } from "../api/client"
 
 const PRIMARY_COLOR = "#162a5a"
+const HOURS = [8, 10, 12, 14, 16, 18]
 
-function getStressLabel(score) {
-  if (score <= 0.2) return "Estable"
-  if (score <= 0.4) return "Estrés bajo"
-  if (score <= 0.6) return "Estrés moderado"
-  if (score <= 0.8) return "Estrés alto"
-  return "Crítico"
+function getPressureLabel(score) {
+  if (score <= 0.2) return "Muy recomendable"
+  if (score <= 0.4) return "Buena opción"
+  if (score <= 0.6) return "Normal"
+  if (score <= 0.8) return "Puede haber espera"
+  return "Mejor evitar ahora"
 }
 
-function getStressColor(label) {
-  if (label === "Estable") return "#6cc36a"
-  if (label === "Estrés bajo") return "#84a63a"
-  if (label === "Estrés moderado") return "#c98b1f"
-  if (label === "Estrés alto") return "#d97a45"
+function getPressureColor(score) {
+  if (score <= 0.2) return "#6cc36a"
+  if (score <= 0.4) return "#84a63a"
+  if (score <= 0.6) return "#c98b1f"
+  if (score <= 0.8) return "#d97a45"
   return "#dc2626"
+}
+
+function formatPressure(score) {
+  return `${Math.round(Number(score) * 100)}%`
 }
 
 function getCurrentModelDate() {
@@ -40,6 +43,7 @@ function getCurrentModelDate() {
 
 export default function AnalyticsPage() {
   const [zones, setZones] = useState([])
+  const [hourlyData, setHourlyData] = useState([])
   const [zoneNames, setZoneNames] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -51,9 +55,28 @@ export default function AnalyticsPage() {
         setError("")
 
         const { dayOfWeek, hour } = getCurrentModelDate()
-        const data = await getMapData(dayOfWeek, hour)
+        const currentData = await getMapData(dayOfWeek, hour)
+        setZones(currentData?.zones || [])
 
-        setZones(data?.zones || [])
+        const hourlyResults = await Promise.all(
+          HOURS.map(async (h) => {
+            const response = await getMapData(dayOfWeek, h)
+            const hourZones = response?.zones || []
+
+            const avg =
+              hourZones.length > 0
+                ? hourZones.reduce((acc, z) => acc + Number(z.score), 0) /
+                  hourZones.length
+                : 0
+
+            return {
+              hour: `${String(h).padStart(2, "0")}:00`,
+              score: Number(avg.toFixed(2)),
+            }
+          })
+        )
+
+        setHourlyData(hourlyResults)
 
         const geoRes = await fetch("/nyc-zones.geojson")
         const geoData = await geoRes.json()
@@ -90,63 +113,42 @@ export default function AnalyticsPage() {
   }, [])
 
   const analytics = useMemo(() => {
-    const levels = {
-      Estable: 0,
-      "Estrés bajo": 0,
-      "Estrés moderado": 0,
-      "Estrés alto": 0,
-      Crítico: 0,
-    }
-
-    for (const zone of zones) {
-      const label = getStressLabel(Number(zone.score))
-      levels[label] += 1
-    }
-
-    const distribution = Object.entries(levels).map(([label, count]) => ({
-      label,
-      count,
-      color: getStressColor(label),
+    const namedZones = zones.map((z) => ({
+      id: Number(z.zone_id),
+      name: zoneNames[Number(z.zone_id)] || `Zona ${z.zone_id}`,
+      score: Number(z.score),
+      rawStress: Number(z.raw_stress),
     }))
 
-    const topStress = [...zones]
-      .sort((a, b) => Number(b.score) - Number(a.score))
+    const recommendedZones = [...namedZones]
+      .sort((a, b) => a.score - b.score)
       .slice(0, 5)
-      .map((z) => ({
-        name: zoneNames[Number(z.zone_id)] || `Zona ${z.zone_id}`,
-        score: Number(z.score),
-      }))
 
-    const topStable = [...zones]
-      .sort((a, b) => Number(a.score) - Number(b.score))
+    const avoidZones = [...namedZones]
+      .sort((a, b) => b.score - a.score)
       .slice(0, 5)
-      .map((z) => ({
-        name: zoneNames[Number(z.zone_id)] || `Zona ${z.zone_id}`,
-        score: Number(z.score),
-      }))
 
     const avgScore =
-      zones.length > 0
-        ? zones.reduce((acc, z) => acc + Number(z.score), 0) / zones.length
+      namedZones.length > 0
+        ? namedZones.reduce((acc, z) => acc + z.score, 0) / namedZones.length
         : 0
 
-    const criticalZones = zones.filter((z) => Number(z.score) > 0.8).length
-    const stableZones = zones.filter((z) => Number(z.score) <= 0.2).length
+    const bestHour = [...hourlyData].sort((a, b) => a.score - b.score)[0]
+    const worstHour = [...hourlyData].sort((a, b) => b.score - a.score)[0]
 
     return {
-      distribution,
-      topStress,
-      topStable,
+      recommendedZones,
+      avoidZones,
       avgScore,
-      criticalZones,
-      stableZones,
+      bestHour,
+      worstHour,
     }
-  }, [zones, zoneNames])
+  }, [zones, zoneNames, hourlyData])
 
   if (loading) {
     return (
       <PageLayout>
-        <p>Cargando análisis...</p>
+        <p>Cargando recomendaciones...</p>
       </PageLayout>
     )
   }
@@ -161,117 +163,125 @@ export default function AnalyticsPage() {
 
   return (
     <PageLayout>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "24px",
-        }}
-      >
-        <div>
-          <h1 style={{ margin: 0, color: PRIMARY_COLOR }}>Análisis completo</h1>
-          <p style={{ margin: "6px 0 0", color: "#6b7280" }}>
-            Resumen avanzado del estrés urbano por zonas
-          </p>
-        </div>
-
-        <button
-          onClick={() => (window.location.href = "/")}
-          style={{
-            border: "1px solid #d1d5db",
-            background: "white",
-            color: PRIMARY_COLOR,
-            borderRadius: "10px",
-            padding: "10px 14px",
-            fontWeight: 700,
-            cursor: "pointer",
-          }}
-        >
-          Volver al dashboard
-        </button>
-      </div>
+      <Header />
 
       <div
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(3, 1fr)",
           gap: "16px",
-          marginBottom: "20px",
+          marginBottom: "22px",
         }}
       >
-        <SummaryCard title="Score medio" value={analytics.avgScore.toFixed(2)} />
-        <SummaryCard title="Zonas críticas" value={analytics.criticalZones} />
-        <SummaryCard title="Zonas estables" value={analytics.stableZones} />
+        <SummaryCard
+          title="Presión media ahora"
+          value={formatPressure(analytics.avgScore)}
+          subtitle={getPressureLabel(analytics.avgScore)}
+        />
+
+        <SummaryCard
+          title="Mejor hora estimada"
+          value={analytics.bestHour?.hour || "-"}
+          subtitle="Menor presión media"
+        />
+
+        <SummaryCard
+          title="Hora más saturada"
+          value={analytics.worstHour?.hour || "-"}
+          subtitle="Mayor presión media"
+        />
       </div>
+
+      <InfoCard
+        title="¿Para qué sirve este análisis?"
+        text="Esta página te ayuda a elegir mejor dónde y cuándo pedir un viaje. Una presión alta puede indicar más demanda, más tráfico, mayor espera o más probabilidad de precios elevados."
+      />
 
       <div
         style={{
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
           gap: "20px",
+          marginTop: "20px",
         }}
       >
-        <ChartCard title="Distribución por nivel de estrés">
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={analytics.distribution}>
-              <CartesianGrid stroke="#eeeeee" />
-              <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
-              <Bar dataKey="count">
-                {analytics.distribution.map((entry) => (
-                  <Cell key={entry.label} fill={entry.color} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
+        <RecommendationCard
+          title="Zonas recomendadas para pedir un viaje"
+          subtitle="Áreas con menor presión en este momento."
+          zones={analytics.recommendedZones}
+          mode="good"
+        />
 
-        <ChartCard title="Peso relativo de cada nivel">
-          <ResponsiveContainer width="100%" height={280}>
-            <PieChart>
-              <Pie
-                data={analytics.distribution}
-                dataKey="count"
-                nameKey="label"
-                outerRadius={95}
-                label
-              >
-                {analytics.distribution.map((entry) => (
-                  <Cell key={entry.label} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
-        </ChartCard>
-
-        <ChartCard title="Top 5 zonas más inestables">
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={analytics.topStress} layout="vertical">
-              <CartesianGrid stroke="#eeeeee" />
-              <XAxis type="number" domain={[0, 1]} />
-              <YAxis type="category" dataKey="name" width={150} tick={{ fontSize: 12 }} />
-              <Tooltip />
-              <Bar dataKey="score" fill="#dc2626" />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
-
-        <ChartCard title="Top 5 zonas más estables">
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={analytics.topStable} layout="vertical">
-              <CartesianGrid stroke="#eeeeee" />
-              <XAxis type="number" domain={[0, 1]} />
-              <YAxis type="category" dataKey="name" width={150} tick={{ fontSize: 12 }} />
-              <Tooltip />
-              <Bar dataKey="score" fill="#22c55e" />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
+        <RecommendationCard
+          title="Zonas que conviene evitar"
+          subtitle="Áreas con más saturación y posible subida de espera o precio."
+          zones={analytics.avoidZones}
+          mode="bad"
+        />
       </div>
+
+      <ChartCard
+        title="Mejores momentos para moverse"
+        subtitle="Compara la presión media estimada a distintas horas del día."
+      >
+        <ResponsiveContainer width="100%" height={280}>
+          <BarChart data={hourlyData} margin={{ top: 10, right: 20, left: -10, bottom: 10 }}>
+            <CartesianGrid stroke="#eeeeee" />
+            <XAxis dataKey="hour" />
+            <YAxis
+              domain={[0, 1]}
+              tickFormatter={(value) => `${Math.round(value * 100)}%`}
+            />
+            <Tooltip
+              formatter={(value) => [
+                formatPressure(value),
+                "Presión estimada",
+              ]}
+            />
+            <Bar dataKey="score" radius={[8, 8, 0, 0]}>
+              {hourlyData.map((entry) => (
+                <Cell key={entry.hour} fill={getPressureColor(entry.score)} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartCard>
     </PageLayout>
+  )
+}
+
+function Header() {
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: "24px",
+      }}
+    >
+      <div>
+        <h1 style={{ margin: 0, color: PRIMARY_COLOR }}>Análisis para moverte mejor</h1>
+        <p style={{ margin: "6px 0 0", color: "#6b7280" }}>
+          Recomendaciones para elegir dónde y cuándo pedir un viaje en Nueva York
+        </p>
+      </div>
+
+      <button
+        onClick={() => (window.location.href = "/")}
+        style={{
+          border: "1px solid #d1d5db",
+          background: "white",
+          color: PRIMARY_COLOR,
+          borderRadius: "10px",
+          padding: "10px 14px",
+          fontWeight: 700,
+          cursor: "pointer",
+        }}
+      >
+        Volver al dashboard
+      </button>
+    </div>
   )
 }
 
@@ -290,7 +300,7 @@ function PageLayout({ children }) {
   )
 }
 
-function SummaryCard({ title, value }) {
+function SummaryCard({ title, value, subtitle }) {
   return (
     <div
       style={{
@@ -302,11 +312,30 @@ function SummaryCard({ title, value }) {
     >
       <div style={{ color: "#cbd5e1", fontSize: "14px" }}>{title}</div>
       <div style={{ fontSize: "34px", fontWeight: 800, marginTop: "8px" }}>{value}</div>
+      <div style={{ color: "#cbd5e1", fontSize: "13px", marginTop: "4px" }}>{subtitle}</div>
     </div>
   )
 }
 
-function ChartCard({ title, children }) {
+function InfoCard({ title, text }) {
+  return (
+    <div
+      style={{
+        background: "white",
+        border: "1px solid #e5e7eb",
+        borderRadius: "16px",
+        padding: "18px 20px",
+      }}
+    >
+      <h3 style={{ margin: "0 0 8px", color: PRIMARY_COLOR }}>{title}</h3>
+      <p style={{ margin: 0, color: "#475569", lineHeight: 1.5 }}>{text}</p>
+    </div>
+  )
+}
+
+function RecommendationCard({ title, subtitle, zones, mode }) {
+  const isGood = mode === "good"
+
   return (
     <div
       style={{
@@ -316,7 +345,78 @@ function ChartCard({ title, children }) {
         padding: "20px",
       }}
     >
-      <h3 style={{ marginTop: 0, color: PRIMARY_COLOR }}>{title}</h3>
+      <h3 style={{ margin: "0 0 6px", color: PRIMARY_COLOR }}>{title}</h3>
+      <p style={{ margin: "0 0 16px", color: "#6b7280", fontSize: "14px" }}>{subtitle}</p>
+
+      <div style={{ display: "grid", gap: "10px" }}>
+        {zones.map((zone, index) => (
+          <div
+            key={zone.id}
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              border: "1px solid #e5e7eb",
+              borderRadius: "12px",
+              padding: "12px",
+              background: isGood ? "#f8fff8" : "#fff7f7",
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 800, color: PRIMARY_COLOR }}>
+                {index + 1}. {zone.name}
+              </div>
+              <div style={{ color: "#6b7280", fontSize: "13px", marginTop: "3px" }}>
+                {getPressureLabel(zone.score)}
+              </div>
+            </div>
+
+            <div style={{ textAlign: "right" }}>
+              <div
+                style={{
+                  fontWeight: 800,
+                  color: getPressureColor(zone.score),
+                  fontSize: "18px",
+                }}
+              >
+                Índice {formatPressure(zone.score)}
+              </div>
+
+              <div
+                style={{
+                  color: "#6b7280",
+                  fontSize: "12px",
+                  marginTop: "3px",
+                }}
+              >
+                Stress real{" "}
+                {Number.isFinite(zone.rawStress)
+                  ? zone.rawStress.toFixed(2)
+                  : "-"}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ChartCard({ title, subtitle, children }) {
+  return (
+    <div
+      style={{
+        background: "white",
+        border: "1px solid #e5e7eb",
+        borderRadius: "16px",
+        padding: "20px",
+        marginTop: "20px",
+      }}
+    >
+      <h3 style={{ margin: "0 0 6px", color: PRIMARY_COLOR }}>{title}</h3>
+      <p style={{ margin: "0 0 16px", color: "#6b7280", fontSize: "14px" }}>
+        {subtitle}
+      </p>
       {children}
     </div>
   )

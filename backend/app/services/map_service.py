@@ -35,6 +35,7 @@ def build_map(day_of_week: int, hour: int) -> MapResponse:
             ZoneScore(
                 zone_id=int(zone_id),
                 score=float(score),
+                raw_stress=float(raw_stress),
                 level=_score_to_level(score),
             )
         )
