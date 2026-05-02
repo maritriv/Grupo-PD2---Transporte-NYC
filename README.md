@@ -391,6 +391,7 @@ Este proyecto fue desarrollado por los siguientes estudiantes del Grado en Ingen
 
 **Entrega 2**
 - [Presentación Entrega 2]()
+- [Video]()
 - [Memoria Entrega 2](https://docs.google.com/document/d/1BeDUwpIIZ76oQSTDzrjcvYsROVYALI4uF1sLKIetDtw/edit?usp=sharing)
 - [Entrega 2: Distribución del Trabajo](https://docs.google.com/document/d/19Q7bwqnLdEIqhRjMFr6UOWoBgs1nh_71DfUrqB43VlE/edit?usp=sharing)
 
