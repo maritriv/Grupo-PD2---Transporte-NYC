@@ -33,7 +33,7 @@ Incluye:
 - Histórico de presión urbana.
 - Panel de alertas con búsqueda y previsión por zona.
 
-![Dashboard principal](./docs/images/dashboard.png)
+![Dashboard principal](../docs/images/dashboard.png)
 
 ---
 
@@ -47,7 +47,7 @@ Los colores representan:
 - Amarillo/naranja: presión intermedia.
 - Rojo: zona con alta presión o recomendable evitar.
 
-![Mapa de presión urbana](./docs/images/mapa.png)
+![Mapa de presión urbana](../docs/images/mapa.png)
 
 ---
 
@@ -62,7 +62,7 @@ Cada zona muestra:
 - Valor interno del modelo.
 - Previsión para próximas horas.
 
-![Panel de alertas](./docs/images/alertas.png)
+![Panel de alertas](../docs/images/alertas.png)
 
 ---
 
@@ -72,7 +72,7 @@ El histórico muestra cómo cambia la presión media durante distintas horas del
 
 Sirve para entender si la situación tiende a mejorar, empeorar o mantenerse estable.
 
-![Histórico](./docs/images/historico.png)
+![Histórico](../docs/images/historico.png)
 
 ---
 
@@ -87,7 +87,7 @@ La página de análisis resume la información más útil para el usuario:
 - Zonas que conviene evitar.
 - Comparación de presión media por horas.
 
-![Análisis completo](./docs/images/analisis.png)
+![Análisis completo](../docs/images/analisis.png)
 
 ---
 
