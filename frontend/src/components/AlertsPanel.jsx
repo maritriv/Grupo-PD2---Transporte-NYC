@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState } from "react"
 import { getZoneForecast } from "../api/client"
 
-function getStressLabel(score) {
+function getPressureLabel(score) {
   if (score === null || score === undefined || Number.isNaN(score)) return "Sin datos"
-  if (score <= 0.2) return "Estable"
-  if (score <= 0.4) return "Bajo estrés"
-  if (score <= 0.6) return "Estrés moderado"
-  if (score <= 0.8) return "Alto estrés"
-  return "Crítico"
+  if (score <= 0.2) return "Muy recomendable"
+  if (score <= 0.4) return "Buena opción"
+  if (score <= 0.6) return "Normal"
+  if (score <= 0.8) return "Puede haber espera"
+  return "Mejor evitar ahora"
 }
 
-function getStressColor(score) {
+function getPressureColor(score) {
   if (score === null || score === undefined || Number.isNaN(score)) return "#6b7280"
   if (score <= 0.2) return "#6cc36a"
   if (score <= 0.4) return "#84a63a"
@@ -19,7 +19,11 @@ function getStressColor(score) {
   return "#dc2626"
 }
 
-function ForecastDetails({ zoneId, zoneName, score, primaryColor, dayOfWeek, hour }) {
+function formatPressure(score) {
+  return `${Math.round(Number(score) * 100)}%`
+}
+
+function ForecastDetails({ zoneId, zoneName, score, rawStress, primaryColor, dayOfWeek, hour }) {
   const [forecast, setForecast] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
@@ -36,14 +40,14 @@ function ForecastDetails({ zoneId, zoneName, score, primaryColor, dayOfWeek, hou
           timeLabel: item.time_label,
           score: Number(item.score),
           rawStress: Number(item.raw_stress),
-          label: getStressLabel(Number(item.score)),
-          color: getStressColor(Number(item.score)),
+          label: getPressureLabel(Number(item.score)),
+          color: getPressureColor(Number(item.score)),
         }))
 
         setForecast(parsed)
       } catch (err) {
         console.error(err)
-        setError("No se pudo cargar la previsión real")
+        setError("No se pudo cargar la previsión")
         setForecast([])
       } finally {
         setLoading(false)
@@ -54,7 +58,7 @@ function ForecastDetails({ zoneId, zoneName, score, primaryColor, dayOfWeek, hou
   }, [zoneId, dayOfWeek, hour])
 
   if (loading) {
-    return <div style={{ marginTop: "12px", color: "#6b7280" }}>Cargando previsión real...</div>
+    return <div style={{ marginTop: "12px", color: "#6b7280" }}>Cargando previsión...</div>
   }
 
   if (error) {
@@ -72,7 +76,7 @@ function ForecastDetails({ zoneId, zoneName, score, primaryColor, dayOfWeek, hou
     <div
       style={{
         marginTop: "12px",
-        padding: "14px",
+        padding: "12px",
         borderRadius: "12px",
         background: "#f9fafb",
         border: "1px solid #e5e7eb",
@@ -86,28 +90,39 @@ function ForecastDetails({ zoneId, zoneName, score, primaryColor, dayOfWeek, hou
           marginBottom: "14px",
         }}
       >
-        <div style={{ padding: "10px", borderRadius: "10px", background: "white", border: "1px solid #e5e7eb" }}>
-          <div style={{ fontSize: "12px", color: "#6b7280", marginBottom: "4px" }}>Estado actual</div>
-          <div style={{ color: getStressColor(score), fontWeight: 700 }}>{getStressLabel(score)}</div>
-        </div>
+        <MiniCard
+          title="Estado actual"
+          value={getPressureLabel(score)}
+          color={getPressureColor(score)}
+        />
 
-        <div style={{ padding: "10px", borderRadius: "10px", background: "white", border: "1px solid #e5e7eb" }}>
-          <div style={{ fontSize: "12px", color: "#6b7280", marginBottom: "4px" }}>Score actual</div>
-          <div style={{ color: primaryColor, fontWeight: 700 }}>{score.toFixed(2)}</div>
-        </div>
+        <MiniCard
+          title="Índice actual"
+          value={formatPressure(score)}
+          color={primaryColor}
+        />
 
-        <div style={{ padding: "10px", borderRadius: "10px", background: "white", border: "1px solid #e5e7eb" }}>
-          <div style={{ fontSize: "12px", color: "#6b7280", marginBottom: "4px" }}>Pico previsto</div>
-          <div style={{ color: getStressColor(peak.score), fontWeight: 700 }}>{peak.score.toFixed(2)}</div>
-        </div>
+        <MiniCard
+          title="Valor del modelo"
+          value={Number.isFinite(rawStress) ? rawStress.toFixed(2) : "-"}
+          color={primaryColor}
+        />
 
-        <div style={{ padding: "10px", borderRadius: "10px", background: "white", border: "1px solid #e5e7eb" }}>
-          <div style={{ fontSize: "12px", color: "#6b7280", marginBottom: "4px" }}>Horizonte de mayor tensión</div>
-          <div style={{ color: primaryColor, fontWeight: 700 }}>{peak.timeLabel}</div>
-        </div>
+        <MiniCard
+          title="Mayor presión prevista"
+          value={peak.timeLabel}
+          color={getPressureColor(peak.score)}
+        />
       </div>
 
-      <div style={{ marginBottom: "8px", fontWeight: 700, color: primaryColor }}>
+      <div
+        style={{
+          marginBottom: "8px",
+          fontWeight: 700,
+          fontSize: "15px",
+          color: primaryColor,
+        }}
+      >
         Evolución prevista de {zoneName}
       </div>
 
@@ -119,22 +134,36 @@ function ForecastDetails({ zoneId, zoneName, score, primaryColor, dayOfWeek, hou
           background: "white",
         }}
       >
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
           <thead>
             <tr style={{ background: "#f3f4f6", color: "#374151" }}>
-              <th style={{ textAlign: "left", padding: "8px 10px" }}>Horizonte</th>
-              <th style={{ textAlign: "left", padding: "8px 10px" }}>Score</th>
-              <th style={{ textAlign: "left", padding: "8px 10px" }}>Stress real</th>
-              <th style={{ textAlign: "left", padding: "8px 10px" }}>Estado</th>
+              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 600 }}>Momento</th>
+              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 600 }}>Índice</th>
+              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 600 }}>Modelo</th>
+              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 600 }}>
+                Recomendación
+              </th>
             </tr>
           </thead>
           <tbody>
             {forecast.map((item) => (
               <tr key={item.timeLabel} style={{ borderTop: "1px solid #e5e7eb" }}>
-                <td style={{ padding: "8px 10px" }}>{item.timeLabel}</td>
-                <td style={{ padding: "8px 10px" }}>{item.score.toFixed(2)}</td>
-                <td style={{ padding: "8px 10px" }}>{item.rawStress.toFixed(2)}</td>
-                <td style={{ padding: "8px 10px", color: item.color, fontWeight: 600 }}>{item.label}</td>
+                <td style={{ padding: "7px 8px" }}>{item.timeLabel}</td>
+                <td style={{ padding: "7px 8px", fontWeight: 600 }}>
+                  {formatPressure(item.score)}
+                </td>
+                <td style={{ padding: "7px 8px" }}>
+                  {Number.isFinite(item.rawStress) ? item.rawStress.toFixed(2) : "-"}
+                </td>
+                <td
+                  style={{
+                    padding: "7px 8px",
+                    color: item.color,
+                    fontWeight: 600,
+                  }}
+                >
+                  {item.label}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -142,7 +171,34 @@ function ForecastDetails({ zoneId, zoneName, score, primaryColor, dayOfWeek, hou
       </div>
 
       <div style={{ marginTop: "10px", fontSize: "12px", color: "#6b7280" }}>
-        Media prevista próximas horas: <strong>{average.toFixed(2)}</strong>
+        Presión media prevista: <strong>{formatPressure(average)}</strong>
+      </div>
+    </div>
+  )
+}
+
+function MiniCard({ title, value, color }) {
+  return (
+    <div
+      style={{
+        padding: "8px 10px",
+        borderRadius: "10px",
+        background: "white",
+        border: "1px solid #e5e7eb",
+      }}
+    >
+      <div style={{ fontSize: "11px", color: "#6b7280", marginBottom: "2px" }}>
+        {title}
+      </div>
+      <div
+        style={{
+          color,
+          fontWeight: 600,
+          fontSize: "14px",
+          lineHeight: 1.25,
+        }}
+      >
+        {value}
       </div>
     </div>
   )
@@ -257,8 +313,8 @@ export default function AlertsPanel({ zones, primaryColor, dayOfWeek, hour }) {
             fontWeight: 600,
           }}
         >
-          <option value="desc">Mayor estrés</option>
-          <option value="asc">Menor estrés</option>
+          <option value="desc">Mayor presión</option>
+          <option value="asc">Menor presión</option>
         </select>
       </div>
 
@@ -318,8 +374,9 @@ export default function AlertsPanel({ zones, primaryColor, dayOfWeek, hour }) {
           const zoneId = Number(z.zone_id)
           const zoneName = zoneNames[zoneId] || `Zona ${zoneId}`
           const score = Number(z.score)
-          const label = getStressLabel(score)
-          const labelColor = getStressColor(score)
+          const rawStress = Number(z.raw_stress)
+          const label = getPressureLabel(score)
+          const labelColor = getPressureColor(score)
           const isExpanded = expandedZoneId === zoneId
 
           return (
@@ -342,10 +399,27 @@ export default function AlertsPanel({ zones, primaryColor, dayOfWeek, hour }) {
                 {zoneName}
               </strong>
 
-              <div style={{ color: labelColor, marginBottom: "4px" }}>{label}</div>
+              <div
+                style={{
+                  color: labelColor,
+                  marginBottom: "2px",
+                  fontWeight: 600,
+                  fontSize: "14px",
+                }}
+              >
+                {label}
+              </div>
 
-              <small style={{ display: "block", marginBottom: "10px" }}>
-                Score: {score.toFixed(2)}
+              <small
+                style={{
+                  display: "block",
+                  marginBottom: "8px",
+                  color: "#6b7280",
+                  fontSize: "12px",
+                }}
+              >
+                Índice {formatPressure(score)}
+                {Number.isFinite(rawStress) && <> · Modelo {rawStress.toFixed(2)}</>}
               </small>
 
               <button
@@ -369,6 +443,7 @@ export default function AlertsPanel({ zones, primaryColor, dayOfWeek, hour }) {
                   zoneId={zoneId}
                   zoneName={zoneName}
                   score={score}
+                  rawStress={rawStress}
                   primaryColor={primaryColor}
                   dayOfWeek={dayOfWeek}
                   hour={hour}
