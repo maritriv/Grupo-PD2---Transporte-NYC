@@ -134,7 +134,7 @@ export default function Home() {
                 hour={targetHour}
               />
 
-              <HistoryChart primaryColor={PRIMARY_COLOR} />
+              <HistoryChart primaryColor={PRIMARY_COLOR} dayOfWeek={targetDay} />
             </div>
           </div>
         )}

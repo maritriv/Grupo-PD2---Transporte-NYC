@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react"
 import {
   LineChart,
   Line,
@@ -6,16 +7,11 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
+  Label,
 } from "recharts"
+import { getMapData } from "../api/client"
 
-const data = [
-  { time: "08", stress: 0.2 },
-  { time: "10", stress: 0.3 },
-  { time: "12", stress: 0.4 },
-  { time: "14", stress: 0.5 },
-  { time: "16", stress: 0.7 },
-  { time: "18", stress: 0.8 },
-]
+const HOURS = [8, 10, 12, 14, 16, 18]
 
 function getStressLabel(score) {
   if (score <= 0.2) return "Estable"
@@ -50,7 +46,7 @@ function CustomTooltip({ active, payload, label }) {
       }}
     >
       <div style={{ fontWeight: 700, marginBottom: "4px" }}>{label}:00</div>
-      <div>Score: {score.toFixed(2)}</div>
+      <div>Estrés medio: {score.toFixed(2)}</div>
       <div style={{ color: getStressColor(score), fontWeight: 700 }}>
         {getStressLabel(score)}
       </div>
@@ -73,15 +69,62 @@ function CustomDot({ cx, cy, payload }) {
   )
 }
 
-export default function HistoryChart({ primaryColor }) {
-  const first = data[0]?.stress ?? 0
-  const last = data[data.length - 1]?.stress ?? 0
-  const trend = last > first ? "Tendencia creciente" : last < first ? "Tendencia descendente" : "Tendencia estable"
-  const trendColor = getStressColor(last)
+export default function HistoryChart({ primaryColor, dayOfWeek }) {
+  const [data, setData] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+  const [showHelp, setShowHelp] = useState(false)
 
-  function openAnalytics() {
-    window.location.href = "/analytics"
-  }
+  useEffect(() => {
+    async function loadHistory() {
+      try {
+        setLoading(true)
+        setError("")
+
+        const results = await Promise.all(
+          HOURS.map(async (hour) => {
+            const response = await getMapData(dayOfWeek, hour)
+            const zones = response?.zones || []
+
+            const avg =
+              zones.length > 0
+                ? zones.reduce((acc, z) => acc + Number(z.score), 0) / zones.length
+                : 0
+
+            return {
+              time: String(hour).padStart(2, "0"),
+              stress: Number(avg.toFixed(3)),
+            }
+          })
+        )
+
+        setData(results)
+      } catch (err) {
+        console.error(err)
+        setError("No se pudo cargar el histórico")
+        setData([])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadHistory()
+  }, [dayOfWeek])
+
+  const trend = useMemo(() => {
+    if (data.length < 2) return "Sin tendencia"
+
+    const first = data[0].stress
+    const last = data[data.length - 1].stress
+    const diff = last - first
+
+    if (Math.abs(diff) < 0.02) return "Nivel bastante estable"
+    if (diff > 0) return "Sube durante el día"
+    return "Baja durante el día"
+  }, [data])
+
+  const trendColor =
+    data.length > 0 ? getStressColor(data[data.length - 1].stress) : "#6b7280"
 
   return (
     <div
@@ -117,42 +160,121 @@ export default function HistoryChart({ primaryColor }) {
           </div>
         </div>
 
-        <button
-          onClick={openAnalytics}
+        <div
           style={{
-            border: "1px solid #d1d5db",
-            background: "white",
-            color: primaryColor,
-            borderRadius: "10px",
-            padding: "8px 10px",
-            fontSize: "12px",
-            fontWeight: 700,
-            cursor: "pointer",
-            whiteSpace: "nowrap",
+            display: "flex",
+            gap: "8px",
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
           }}
         >
-          Ver análisis completo
-        </button>
+          <button
+            onClick={() => setShowHelp((current) => !current)}
+            style={{
+              border: "1px solid #d1d5db",
+              background: showHelp ? "#f3f4f6" : "white",
+              color: primaryColor,
+              borderRadius: "10px",
+              padding: "8px 10px",
+              fontSize: "12px",
+              fontWeight: 700,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {showHelp ? "Ocultar ayuda" : "Ayuda"}
+          </button>
+
+          <button
+            onClick={() => (window.location.href = "/analytics")}
+            style={{
+              border: "1px solid #d1d5db",
+              background: "white",
+              color: primaryColor,
+              borderRadius: "10px",
+              padding: "8px 10px",
+              fontSize: "12px",
+              fontWeight: 700,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Ver análisis completo
+          </button>
+        </div>
       </div>
 
-      <div style={{ width: "100%", height: 220 }}>
-        <ResponsiveContainer>
-          <LineChart data={data} margin={{ top: 10, right: 12, left: -18, bottom: 0 }}>
-            <CartesianGrid stroke="#eeeeee" />
-            <XAxis dataKey="time" />
-            <YAxis domain={[0, 1]} />
-            <Tooltip content={<CustomTooltip />} />
-            <Line
-              type="monotone"
-              dataKey="stress"
-              stroke={primaryColor}
-              strokeWidth={2}
-              dot={<CustomDot />}
-              activeDot={{ r: 7 }}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+      {showHelp && (
+        <div
+          style={{
+            marginBottom: "14px",
+            padding: "12px 14px",
+            borderRadius: "12px",
+            background: "#f8fafc",
+            border: "1px solid #e5e7eb",
+            color: "#334155",
+            fontSize: "13px",
+            lineHeight: 1.45,
+          }}
+        >
+          <strong style={{ color: primaryColor }}>¿Qué significa?</strong>
+          <br />
+          Muestra cómo cambia el estrés medio de la ciudad a lo largo del día.
+          Cuanto más cerca está de 1, mayor es la presión en las zonas analizadas.
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ color: "#6b7280", padding: "30px 0" }}>
+          Cargando histórico...
+        </div>
+      ) : error ? (
+        <div style={{ color: "#dc2626", padding: "30px 0" }}>{error}</div>
+      ) : (
+        <div style={{ width: "100%", height: 220 }}>
+          <ResponsiveContainer>
+            <LineChart
+              data={data}
+              margin={{ top: 8, right: 12, left: 8, bottom: 24 }}
+            >
+              <CartesianGrid stroke="#eeeeee" />
+
+              <XAxis dataKey="time">
+                <Label
+                  value="Hora del día"
+                  offset={-10}
+                  position="insideBottom"
+                  style={{ fontSize: 12, fill: "#6b7280" }}
+                />
+              </XAxis>
+
+              <YAxis domain={[0, 1]}>
+                <Label
+                  value="Nivel de estrés"
+                  angle={-90}
+                  position="insideLeft"
+                  style={{
+                    textAnchor: "middle",
+                    fontSize: 12,
+                    fill: "#6b7280",
+                  }}
+                />
+              </YAxis>
+
+              <Tooltip content={<CustomTooltip />} />
+
+              <Line
+                type="monotone"
+                dataKey="stress"
+                stroke={primaryColor}
+                strokeWidth={2}
+                dot={<CustomDot />}
+                activeDot={{ r: 7 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
     </div>
   )
 }

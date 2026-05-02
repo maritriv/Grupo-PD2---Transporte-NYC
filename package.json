@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "setup": "uv sync && npm install && cd frontend && npm install && cd ..",
-    "dev": "uv run -m src.ml.models_ej2.i_update_web_features --skip-backend-reload && concurrently -n backend,frontend -c blue,green \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev": "concurrently -n backend,frontend -c blue,green \"npm run dev:backend\" \" uv run -m src.ml.models_ej2.i_update_web_features --skip-backend-reload &&  npm run dev:frontend\"",
     "dev:backend": "uv run -m uvicorn backend.app.main:app --reload",
     "dev:frontend": "cd frontend && npm run dev -- --open"
   },
