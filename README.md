@@ -1,6 +1,8 @@
 # MacBrides
 
-![Dashboard principal](./docs/images/dashboard.png)
+<p align="center">
+  <img src="docs/images/dashboard.png" width="700"/>
+</p>
 
 ## Descripción
 
