@@ -28,6 +28,7 @@ pruebas.py
 !docs/ejercicios/ex1b/modelo_propinas_files/*.png
 !docs/ejercicios/ex2/random_forest_regressor_files/*.png
 !docs/ejercicios/ex2/gbt_regressor_files/*.png
+!docs/images/*.png
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

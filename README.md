@@ -1,5 +1,7 @@
 # MacBrides
 
+![Dashboard principal](./docs/images/dashboard.png)
+
 ## Descripción
 
 Proyecto de **Proyecto de Datos II (UCM, 2025/26)**.  
@@ -164,7 +166,7 @@ El proyecto implementa un pipeline de datos estructurado en capas que transforma
 
 ---
 
-## 🛠️ Instalación del entorno
+## Instalación del entorno
 
 Pasos necesarios para instalar el proyecto. Descripción paso a paso de cómo poner en funcionamiento el entorno de desarrollo.
 
@@ -359,7 +361,7 @@ Esto usa `concurrently` y ejecuta:
 
 Verás ambos logs en la misma terminal.
 
-### ⚙️ Scripts disponibles
+### Scripts disponibles
 Desde la raíz del proyecto:
 ```bash
 npm run setup        # Instala todo el proyecto
@@ -367,6 +369,7 @@ npm run dev          # Ejecuta backend + frontend juntos
 npm run dev:backend  # Solo backend
 npm run dev:frontend # Solo frontend
 ```
+--- 
 
 ## Equipo de desarrollo
 
