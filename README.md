@@ -37,12 +37,27 @@ El objetivo es **analizar el sistema de transporte de pago en Nueva York** (taxi
   - TLC (viajes taxi / VTC)
   - **Meteorología** (Open-Meteo)
   - **Eventos** (NYC Open Data)
+
 - **Pipeline por capas**:
   - `Capa 0` (exploración y muestreo inicial de los datos raw de TLC para estimar volumen, precio medio, hora pico y estructura por servicio y mes, generando un resumen exportable)
   - `Capa 1` (control de calidad estructural sobre los datos en bruto (raw), usando como referencia los Data Dictionaries oficiales de TLC)
   - `Capa 2` (limpieza + estandarización)
   - `Capa 3` (agregación lista para análisis y cruces)
-- **Visualizaciones** para justificar la propuesta (viajes vs meteo vs eventos)
+
+- **Modelos de machine learning**:
+  - Predicción de zona de máxima demanda (clasificación multiclase)
+  - Estimación de propinas (regresión)
+  - Modelado de estrés urbano y patrones de demanda
+
+- **Aplicación web interactiva**:
+  - Dashboard con mapas y series temporales
+  - Visualización de demanda, precios y variables externas
+  - Consumo de datos y predicciones a través de API REST
+
+- **Visualizaciones analíticas**:
+  - Análisis exploratorio de datos
+  - Cruces entre viajes, meteorología y eventos
+  - Generación de gráficos para justificar la propuesta
 
 ---
 
@@ -227,7 +242,7 @@ Añadir al .zshrc o .bashrc:
 export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 export PATH=$JAVA_HOME/bin:$PATH
 export PYSPARK_PYTHON=python3
-export PYSPARK_DRIVER_PYSPARK_PYTHON=python3
+export PYSPARK_DRIVER_PYTHON=python3
 ```
 Aplicar cambios:
 ```
@@ -301,6 +316,65 @@ uv run -m src.extraccion.download_from_minio --no-skip
 ```
 
 > Es necesario que el archivo `credentials.json` esté configurado en la raíz del proyecto antes de ejecutar la descarga.
+
+## Ejecución del pipeline completo
+
+Para ejecutar todo el proyecto (extracción + procesamiento + modelos):
+
+```bash
+uv run -m src.main
+```
+Esto ejecuta:
+
+- Extracción de datos (TLC, meteorología, eventos)
+- Procesamiento por capas (capa1 → capa2 → capa3)
+- Entrenamiento de modelos de machine learning
+
+Si quieres ejecutar por partes el pipeline:
+
+### Ejecutar la extracción de datos:
+```bash
+uv run -m src.extraccion.main
+```
+
+### Ejecutar procesamiento por capas
+
+Capa 1 — Validación:
+```bash
+uv run -m src.procesamiento.capa1.main
+```
+
+Capa 2 — Estandarización
+```bash
+uv run -m src.procesamiento.capa2.main
+```
+
+Capa 3 — Agregación
+```bash
+uv run -m src.procesamiento.capa3.main
+```
+
+o si deseas ejecutar las tres capas seguidas:
+```bash
+uv run -m src.procesamiento.main
+```
+
+### Ejecutar visualizaciones del análisis previo
+```bash
+uv run -m src.visualizaciones.main
+```
+
+### Ejecutar modelos de Machine Learning
+
+Modelos del ejercicio 1:
+```bash
+uv run -m src.ml.models_ej1.main
+```
+
+Modelos del ejercicio 2:
+```bash
+uv run -m src.ml.models_ej2.main
+```
 
 ## Ejecución de la página web
 Este proyecto puede ejecutarse de varias formas, dependiendo de si quieres levantar `backend` y `frontend` por separado o todo a la vez.
@@ -383,7 +457,7 @@ Este proyecto fue desarrollado por los siguientes estudiantes del Grado en Ingen
 - Marina Triviño de las Heras
 
 ##  Recursos adicionales
-# Memorias y presentaciones
+### Memorias y presentaciones
 **Entrega 1**
 - [Presentación Entrega 1](https://docs.google.com/presentation/d/1tKNixIGUhMHiNGJyOn6zXNW0MvKN4t1Iz4JFZ0_KaAE/edit?slide=id.g3c872e10c63_0_294#slide=id.g3c872e10c63_0_294)
 - [Memoria Entrega 1](https://docs.google.com/document/d/1znwca7mk1cS6DRcjjuXsSMnBJvdzIXBFVLbBbsAFyls/edit?usp=sharing)
@@ -391,9 +465,9 @@ Este proyecto fue desarrollado por los siguientes estudiantes del Grado en Ingen
 
 **Entrega 2**
 - [Presentación Entrega 2]()
-- [Video]()
+- [Video](https://drive.google.com/file/d/1KXJVRdSskvmzjvz8nhEzWeRgG0YjDoWK/view?usp=sharing)
 - [Memoria Entrega 2](https://docs.google.com/document/d/1BeDUwpIIZ76oQSTDzrjcvYsROVYALI4uF1sLKIetDtw/edit?usp=sharing)
 - [Entrega 2: Distribución del Trabajo](https://docs.google.com/document/d/19Q7bwqnLdEIqhRjMFr6UOWoBgs1nh_71DfUrqB43VlE/edit?usp=sharing)
 
-# Visualizaciones
+### Visualizaciones
 - [Google drive](https://drive.google.com/drive/folders/1gWM-5GU0OTZgczfwt1Mxz7wQFQUuLo5Z?usp=drive_link)
