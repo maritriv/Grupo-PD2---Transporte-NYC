@@ -262,6 +262,7 @@ def run_xgboost_models(
     val_size: float = 0.15,
     test_size: float = 0.15,
     fit_all_data: bool = False,
+    sample_frac: float | None = None,
 ) -> dict[str, Any]:
     print_stage(
         "ML BOOSTING",
@@ -275,6 +276,11 @@ def run_xgboost_models(
 
     raw_df = read_partitioned_parquet(dataset_path)
     df = prepare_targets(raw_df, target_reg=target_reg, target_clf=target_clf)
+
+    if sample_frac is not None and sample_frac < 1.0:
+        console.print(f"[cyan]Sampleando dataset[/cyan] -> {sample_frac:.1%} del total")
+        df = df.sample(frac=sample_frac, random_state=RANDOM_STATE).reset_index(drop=True)
+
     splits = split_train_val_test(df, val_size=val_size, test_size=test_size)
 
     train_df = splits["train"]
@@ -308,7 +314,7 @@ def run_xgboost_models(
         objective="reg:squarederror",
         tree_method="hist",
         random_state=RANDOM_STATE,
-        n_jobs=-1,
+        n_jobs=4,  # Limitar a 4 cores para reducir memoria
     )
 
     reg_model.fit(
@@ -339,7 +345,7 @@ def run_xgboost_models(
         scale_pos_weight=scale_pos_weight,
         tree_method="hist",
         random_state=RANDOM_STATE,
-        n_jobs=-1,
+        n_jobs=4,  # Limitar a 4 cores para reducir memoria
     )
 
     clf_model.fit(
@@ -395,6 +401,7 @@ def run_xgboost_models(
         "target_classification": target_clf,
         "fit_all_data": bool(fit_all_data),
         "final_training_data": final_training_data,
+        "sample_frac": sample_frac,
         "rmse_test": reg_test_metrics["rmse"],
         "mae_test": reg_test_metrics["mae"],
         "r2_test": reg_test_metrics["r2"],
@@ -497,6 +504,12 @@ def main() -> None:
         action="store_true",
         help="Reentrena el modelo final con train+val+test para despliegue.",
     )
+    parser.add_argument(
+        "--sample-frac",
+        type=float,
+        default=None,
+        help="Fracción del dataset a usar (0.0-1.0). Útil para reducir memoria.",
+    )
 
     args = parser.parse_args()
 
@@ -508,6 +521,7 @@ def main() -> None:
         val_size=args.val_size,
         test_size=args.test_size,
         fit_all_data=args.fit_all_data,
+        sample_frac=args.sample_frac,
     )
 
 
