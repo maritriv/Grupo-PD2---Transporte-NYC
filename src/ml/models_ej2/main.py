@@ -65,6 +65,10 @@ def main() -> None:
             "src.ml.models_ej2.h_buil_web_features",
             [],
         ),
+        (
+            "src.ml.models_ej2.i_update_web_features",
+            [],
+        ),
     ]
 
     for modulo, args in runs:
